@@ -34,7 +34,7 @@ const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
 
         const parsedPath = path.parse(absoluteUrl.pathname);
         let ext = parsedPath.ext;
-        if (!ext) ext = '.html'; // Si no tiene extensión, asumimos HTML interno
+        if (!ext) ext = '.html';
         const withoutExt = parsedPath.dir + '/' + parsedPath.name;
 
         const cleanName = `${absoluteUrl.hostname}${withoutExt}`.replace(/[^a-zA-Z0-9]/g, '-');
@@ -68,7 +68,7 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     const baseName = makeFileName(url);
     const htmlFileName = `${baseName}.html`;
-    const htmlFilePath = path.join(outputDir, htmlFileName);
+    const htmlFilePath = path.join(outputDir, htmlFileName); // <-- HTML principal fuera de _files
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
 
@@ -101,22 +101,6 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     });
     $('script').each((_, el) => {
         if ($(el).attr('src')) resources.push({ attr: 'src', el });
-    });
-
-    // 🧩 NUEVO: enlaces internos (HTML)
-    $('a').each((_, el) => {
-        const href = $(el).attr('href');
-        if (!href || href.startsWith('#')) return;
-
-        try {
-            const abs = new URL(href, url);
-            const baseHost = new URL(url).hostname;
-            if (abs.hostname.endsWith(baseHost)) {
-                resources.push({ attr: 'href', el, isHtml: true });
-            }
-        } catch {
-            // ignorar URLs inválidas
-        }
     });
 
     const isJest = typeof process.env.JEST_WORKER_ID !== 'undefined';
@@ -152,8 +136,9 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await tasks.run();
 
-    const htmlInsideAssetsPath = path.join(assetsDirPath, `${baseName}.html`);
-    await fs.writeFile(htmlInsideAssetsPath, $.html());
-    debug(`Archivo HTML final guardado en ${htmlInsideAssetsPath}`);
-    return htmlInsideAssetsPath;
+    // Guardar HTML final fuera de _files
+    await fs.writeFile(htmlFilePath, $.html());
+    debug(`Archivo HTML final guardado en ${htmlFilePath}`);
+
+    return htmlFilePath;
 }
