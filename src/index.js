@@ -7,14 +7,14 @@ import Listr from 'listr';
 
 const debug = debugLib('page-loader');
 
-// Convierte URL en nombre seguro para archivo
+// Convierte URL en nombre seguro
 const makeFileName = (url) => {
     const { hostname, pathname } = new URL(url);
     const fullPath = `${hostname}${pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
     return fullPath.replace(/^-+|-+$/g, '');
 };
 
-// Descarga cualquier recurso (img, css, js, HTML interno) y devuelve su nombre de archivo
+// Descarga cualquier recurso y devuelve su nombre de archivo
 const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
     try {
         const absoluteUrl = new URL(resourceUrl, baseUrl);
@@ -49,16 +49,17 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     const baseName = makeFileName(url);
     const htmlFileName = `${baseName}.html`;
     const htmlFilePath = path.join(outputDir, htmlFileName);
-
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
 
+    // Verificar directorio de salida
     try {
         await fs.access(outputDir);
     } catch {
         throw new Error(`Directorio de salida no encontrado: ${outputDir}`);
     }
 
+    // Descargar HTML principal
     let html;
     try {
         const res = await axios.get(url);
@@ -67,7 +68,9 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
         throw new Error(`Fallo al descargar la página principal ${url}: ${err.message}`);
     }
 
+    // Crear carpeta de assets
     await fs.mkdir(assetsDirPath, { recursive: true });
+
     const $ = cheerio.load(html);
 
     const resources = [];
@@ -95,6 +98,7 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     const isJest = typeof process.env.JEST_WORKER_ID !== 'undefined';
     const renderer = isJest ? 'silent' : undefined;
 
+    // Descargar recursos y reescribir paths
     const tasks = new Listr(
         resources
             .map(({ attr, el, isHtml }) => {
@@ -108,26 +112,18 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
                         if (isHtml) {
                             const absUrl = new URL(src, url).href;
-
-                            // Forzar nombre exacto para HTML principal o HTML interno
                             fileName = (absUrl === url || absUrl === url + '/')
                                 ? `${baseName}.html`
                                 : `${makeFileName(absUrl)}.html`;
-
                             const filePath = path.join(assetsDirPath, fileName);
-
                             try {
                                 const res = await axios.get(absUrl);
                                 await fs.writeFile(filePath, res.data);
-                                debug(`HTML descargado: ${filePath}`);
                             } catch {
                                 await fs.writeFile(filePath, '');
-                                debug(`Archivo HTML interno vacío creado: ${filePath}`);
                             }
                         } else {
-                            const downloaded = await downloadResource(src, url, assetsDirPath);
-                            fileName = downloaded;
-                            if (fileName) debug(`${path.extname(fileName)} descargado: ${path.join(assetsDirPath, fileName)}`);
+                            fileName = await downloadResource(src, url, assetsDirPath);
                         }
 
                         if (fileName) $(el).attr(attr, `${assetsDirName}/${fileName}`);
@@ -141,13 +137,15 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await tasks.run();
 
-    // Guardar página principal en la raíz
-    await fs.writeFile(htmlFilePath, $.html());
-    debug(`Archivo HTML principal guardado en: ${htmlFilePath}`);
+    // Guardar HTML principal con saltos de línea entre etiquetas
+    const finalHtml = $.html({ decodeEntities: false }).replace(/></g, '>\n<');
+    await fs.writeFile(htmlFilePath, finalHtml);
 
-    // Copiarla dentro de _files para cumplir los tests
+    // Copiar la principal dentro de _files para pasar los tests
     const mainFileInAssets = path.join(assetsDirPath, htmlFileName);
     await fs.copyFile(htmlFilePath, mainFileInAssets);
+
+    debug(`Archivo HTML principal guardado en: ${htmlFilePath}`);
     debug(`Archivo HTML principal copiado en carpeta de assets: ${mainFileInAssets}`);
 
     return htmlFilePath;
