@@ -4,21 +4,46 @@ import path from 'path';
 import * as cheerio from 'cheerio';
 import debugLib from 'debug';
 import Listr from 'listr';
+import { makeFileName } from './utils.js'; // <-- tu util
 
 const debug = debugLib('page-loader');
 
-const makeFileName = (url) => {
-    const { hostname, pathname } = new URL(url);
-    const fullPath = `${hostname}${pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
-    return fullPath.replace(/^-+|-+$/g, '');
+// Descarga cualquier recurso y devuelve su nombre de archivo
+const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
+    try {
+        const absoluteUrl = new URL(resourceUrl, baseUrl);
+
+        if (!['http:', 'https:'].includes(absoluteUrl.protocol)) return null;
+
+        const baseHost = new URL(baseUrl).hostname;
+        if (!absoluteUrl.hostname.endsWith(baseHost)) return null;
+
+        const parsedPath = path.parse(absoluteUrl.pathname);
+        const ext = parsedPath.ext || '.html';
+        const cleanName = `${absoluteUrl.hostname}${parsedPath.dir}/${parsedPath.name}`.replace(/[^a-zA-Z0-9]/g, '-');
+        const fileName = `${cleanName}${ext}`;
+        const filePath = path.join(outputDir, fileName);
+
+        try {
+            const res = await axios.get(absoluteUrl.href, { responseType: 'arraybuffer' });
+            await fs.writeFile(filePath, res.data);
+            return fileName;
+        } catch {
+            await fs.writeFile(filePath, '');
+            return fileName;
+        }
+    } catch {
+        return null;
+    }
 };
 
 export default async function pageLoader(url, outputDir = process.cwd()) {
     debug(`Iniciando descarga de la página: ${url}`);
 
-    const baseName = makeFileName(url);
+    const baseName = makeFileName(url).replace('.html', '');
     const htmlFileName = `${baseName}.html`;
     const htmlFilePath = path.join(outputDir, htmlFileName);
+
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
 
@@ -31,7 +56,6 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     let html;
     try {
         const res = await axios.get(url);
-        if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
         html = res.data;
     } catch (err) {
         throw new Error(`Fallo al descargar la página principal ${url}: ${err.message}`);
@@ -42,7 +66,6 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     const resources = [];
 
-    // Recursos estáticos
     $('img').each((_, el) => resources.push({ attr: 'src', el }));
     $('link').each((_, el) => {
         if ($(el).attr('rel') !== 'canonical') resources.push({ attr: 'href', el });
@@ -51,7 +74,6 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
         if ($(el).attr('src')) resources.push({ attr: 'src', el });
     });
 
-    // Enlaces internos HTML
     $('a').each((_, el) => {
         const href = $(el).attr('href');
         if (!href || href.startsWith('#')) return;
@@ -79,35 +101,25 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
                         if (isHtml) {
                             const absUrl = new URL(src, url).href;
 
-                            // Si es el mismo URL que la página principal, usa baseName
-                            const baseNameLink = (absUrl === url || absUrl === url + '/') ? baseName : makeFileName(absUrl);
-                            fileName = `${baseNameLink}.html`;
+                            // HTML interno igual a la página principal
+                            fileName = absUrl === url || absUrl === url + '/'
+                                ? `${baseName}.html`
+                                : makeFileName(absUrl);
+
                             const filePath = path.join(assetsDirPath, fileName);
 
                             try {
                                 const res = await axios.get(absUrl);
-                                if (res.status === 200) await fs.writeFile(filePath, res.data);
-                                debug(`HTML interno guardado en ${filePath}`);
+                                await fs.writeFile(filePath, res.data);
+                                debug(`HTML descargado: ${filePath}`);
                             } catch {
                                 await fs.writeFile(filePath, '');
-                                debug(`Archivo HTML interno vacío creado en ${filePath}`);
+                                debug(`Archivo HTML interno vacío creado: ${filePath}`);
                             }
                         } else {
-                            const absUrl = new URL(src, url);
-                            const parsedPath = path.parse(absUrl.pathname);
-                            const ext = parsedPath.ext || '.html';
-                            const cleanName = `${absUrl.hostname}${parsedPath.dir}/${parsedPath.name}`.replace(/[^a-zA-Z0-9]/g, '-');
-                            fileName = `${cleanName}${ext}`;
-                            const filePath = path.join(assetsDirPath, fileName);
-
-                            try {
-                                const response = await axios.get(absUrl.href, { responseType: 'arraybuffer' });
-                                if (response.status === 200) await fs.writeFile(filePath, response.data);
-                                debug(`${ext} descargado: ${filePath}`);
-                            } catch {
-                                await fs.writeFile(filePath, '');
-                                debug(`Archivo vacío creado: ${filePath}`);
-                            }
+                            const downloaded = await downloadResource(src, url, assetsDirPath);
+                            fileName = downloaded;
+                            if (fileName) debug(`${path.extname(fileName)} descargado: ${path.join(assetsDirPath, fileName)}`);
                         }
 
                         if (fileName) $(el).attr(attr, `${assetsDirName}/${fileName}`);
