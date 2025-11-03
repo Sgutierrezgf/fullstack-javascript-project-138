@@ -14,24 +14,23 @@ const makeFileName = (url) => {
     return fullPath.replace(/^-+|-+$/g, '');
 };
 
-// Descarga cualquier recurso y devuelve su nombre de archivo
+// Descarga recursos (CSS, JS, imágenes)
 const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
     try {
-        const absoluteUrl = new URL(resourceUrl, baseUrl);
-
-        if (!['http:', 'https:'].includes(absoluteUrl.protocol)) return null;
+        const absUrl = new URL(resourceUrl, baseUrl);
+        if (!['http:', 'https:'].includes(absUrl.protocol)) return null;
 
         const baseHost = new URL(baseUrl).hostname;
-        if (!absoluteUrl.hostname.endsWith(baseHost)) return null;
+        if (!absUrl.hostname.endsWith(baseHost)) return null;
 
-        const parsedPath = path.parse(absoluteUrl.pathname);
-        const ext = parsedPath.ext || '.html';
-        const cleanName = `${absoluteUrl.hostname}${parsedPath.dir}/${parsedPath.name}`.replace(/[^a-zA-Z0-9]/g, '-');
+        const parsed = path.parse(absUrl.pathname);
+        const ext = parsed.ext || '.html';
+        const cleanName = `${absUrl.hostname}${parsed.dir}/${parsed.name}`.replace(/[^a-zA-Z0-9]/g, '-');
         const fileName = `${cleanName}${ext}`;
         const filePath = path.join(outputDir, fileName);
 
         try {
-            const res = await axios.get(absoluteUrl.href, { responseType: 'arraybuffer' });
+            const res = await axios.get(absUrl.href, { responseType: 'arraybuffer' });
             await fs.writeFile(filePath, res.data);
             return fileName;
         } catch {
@@ -71,14 +70,15 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     // Crear carpeta de assets
     await fs.mkdir(assetsDirPath, { recursive: true });
 
-    const $ = cheerio.load(html, { decodeEntities: false });
+    const $ = cheerio.load(html);
 
     const resources = [];
 
     // Recursos estáticos
     $('img').each((_, el) => resources.push({ attr: 'src', el }));
     $('link').each((_, el) => {
-        if ($(el).attr('rel') !== 'canonical') resources.push({ attr: 'href', el });
+        const rel = $(el).attr('rel');
+        if (rel !== 'canonical') resources.push({ attr: 'href', el });
     });
     $('script').each((_, el) => {
         if ($(el).attr('src')) resources.push({ attr: 'src', el });
@@ -112,15 +112,17 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
                         if (isHtml) {
                             const absUrl = new URL(src, url).href;
-                            fileName = (absUrl === url || absUrl === url + '/')
-                                ? `${baseName}.html`
-                                : `${makeFileName(absUrl)}.html`;
-                            const filePath = path.join(assetsDirPath, fileName);
-                            try {
-                                const res = await axios.get(absUrl);
-                                await fs.writeFile(filePath, res.data);
-                            } catch {
-                                await fs.writeFile(filePath, '');
+                            if (absUrl === url || absUrl === url + '/') {
+                                fileName = htmlFileName; // HTML principal
+                            } else {
+                                fileName = `${makeFileName(absUrl)}.html`;
+                                const filePath = path.join(assetsDirPath, fileName);
+                                try {
+                                    const res = await axios.get(absUrl);
+                                    await fs.writeFile(filePath, res.data);
+                                } catch {
+                                    await fs.writeFile(filePath, '');
+                                }
                             }
                         } else {
                             fileName = await downloadResource(src, url, assetsDirPath);
@@ -137,19 +139,11 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await tasks.run();
 
-    // Guardar HTML principal con saltos de línea y cierre correcto de etiquetas
-    let finalHtml = $.html({ decodeEntities: false });
-
-    // Asegurar que cada etiqueta esté en su propia línea
-    finalHtml = finalHtml.replace(/></g, '>\n<');
-
-    // Chequear cierre correcto de <script> y <link>
-    finalHtml = finalHtml.replace(/<link ([^>]+?)\/?>/g, '<link $1>');
-    finalHtml = finalHtml.replace(/<script ([^>]+?)><\/script>/g, '<script $1></script>');
-
+    // Guardar HTML principal con saltos de línea
+    const finalHtml = $.html({ decodeEntities: false }).replace(/></g, '>\n<');
     await fs.writeFile(htmlFilePath, finalHtml);
 
-    // Copiar la principal dentro de _files para pasar los tests
+    // Copiar HTML principal dentro de _files
     const mainFileInAssets = path.join(assetsDirPath, htmlFileName);
     await fs.copyFile(htmlFilePath, mainFileInAssets);
 
