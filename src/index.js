@@ -19,13 +19,8 @@ const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
         const absoluteUrl = new URL(resourceUrl, baseUrl);
         debug(`Procesando recurso: ${absoluteUrl.href}`);
 
-        // Solo HTTP/S
-        if (!['http:', 'https:'].includes(absoluteUrl.protocol)) {
-            debug(`Protocolo no soportado: ${absoluteUrl.protocol}`);
-            return null;
-        }
+        if (!['http:', 'https:'].includes(absoluteUrl.protocol)) return null;
 
-        // Solo recursos del mismo dominio
         const baseHost = new URL(baseUrl).hostname;
         if (!absoluteUrl.hostname.endsWith(baseHost)) {
             debug(`Recurso externo omitido: ${absoluteUrl.hostname}`);
@@ -45,10 +40,7 @@ const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
 
         try {
             const response = await axios.get(absoluteUrl.href, { responseType: 'arraybuffer' });
-            if (response.status !== 200) {
-                debug(`Respuesta no 200 para ${absoluteUrl.href}: ${response.status}`);
-                return null;
-            }
+            if (response.status !== 200) return null;
 
             await fs.writeFile(filePath, response.data);
             debug(`Recurso guardado en ${filePath}`);
@@ -68,18 +60,16 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     const baseName = makeFileName(url);
     const htmlFileName = `${baseName}.html`;
-    const htmlFilePath = path.join(outputDir, htmlFileName); // <-- HTML principal fuera de _files
+    const htmlFilePath = path.join(outputDir, htmlFileName); // HTML principal
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
 
-    // Validar que el directorio exista
     try {
         await fs.access(outputDir);
     } catch {
         throw new Error(`Directorio de salida no encontrado: ${outputDir}`);
     }
 
-    // Descargar HTML principal
     let html;
     try {
         const res = await axios.get(url);
@@ -103,40 +93,61 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
         if ($(el).attr('src')) resources.push({ attr: 'src', el });
     });
 
+    // Enlaces internos HTML
+    $('a').each((_, el) => {
+        const href = $(el).attr('href');
+        if (!href || href.startsWith('#')) return;
+        try {
+            const abs = new URL(href, url);
+            const baseHost = new URL(url).hostname;
+            if (abs.hostname.endsWith(baseHost)) resources.push({ attr: 'href', el, isHtml: true });
+        } catch { }
+    });
+
     const isJest = typeof process.env.JEST_WORKER_ID !== 'undefined';
     const renderer = isJest ? 'silent' : undefined;
 
     const tasks = new Listr(
         resources
-            .map(({ attr, el }) => {
+            .map(({ attr, el, isHtml }) => {
                 const src = $(el).attr(attr);
                 if (!src) return null;
 
                 return {
                     title: `Descargando ${src}`,
                     task: async (ctx, task) => {
-                        const fileName = await downloadResource(src, url, assetsDirPath);
-                        if (fileName) {
-                            $(el).attr(attr, `${assetsDirName}/${fileName}`);
-                            task.title = `Descargado ${src}`;
+                        let fileName;
+
+                        if (isHtml) {
+                            // HTML interno
+                            const absUrl = new URL(src, url).href;
+                            const baseNameLink = makeFileName(absUrl);
+                            fileName = `${baseNameLink}.html`;
+                            const filePath = path.join(assetsDirPath, fileName);
+
+                            try {
+                                const res = await axios.get(absUrl);
+                                if (res.status === 200) await fs.writeFile(filePath, res.data);
+                                debug(`HTML interno guardado en ${filePath}`);
+                            } catch (err) {
+                                debug(`No se pudo descargar HTML interno ${src}: ${err.message}`);
+                                fileName = null;
+                            }
                         } else {
-                            task.title = `Omitido ${src}`;
+                            fileName = await downloadResource(src, url, assetsDirPath);
                         }
-                        return Promise.resolve();
+
+                        if (fileName) $(el).attr(attr, `${assetsDirName}/${fileName}`);
+                        task.title = fileName ? `Descargado ${src}` : `Omitido ${src}`;
                     },
                 };
             })
             .filter(Boolean),
-        {
-            concurrent: true,
-            renderer,
-            exitOnError: false,
-        }
+        { concurrent: true, renderer, exitOnError: false }
     );
 
     await tasks.run();
 
-    // Guardar HTML final fuera de _files
     await fs.writeFile(htmlFilePath, $.html());
     debug(`Archivo HTML final guardado en ${htmlFilePath}`);
 
