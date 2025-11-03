@@ -1,0 +1,7 @@
+{"version": 2, "width": 174, "height": 26, "timestamp": 1762205578, "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"}}
+[0.401713, "o", "\u001b[?2004h\u001b]0;sgutierrezg@Sebastian: /mnt/d/proyects/fullstack-javascript-project-138\u0007\u001b[01;32msgutierrezg@Sebastian\u001b[00m:\u001b[01;34m/mnt/d/proyects/fullstack-javascript-project-138\u001b[00m$ "]
+[3.868164, "o", "\u001b[7mpage-loader --output ./tmp https://example.com/fail\u001b[27m"]
+[5.046675, "o", "\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bpage-loader --output ./tmp https://example.com/fail\r\n\u001b[?2004l\r"]
+[13.14444, "o", "❌ Error: Fallo al descargar la página principal https://example.com/fail: Request failed with status code 404\r\n"]
+[13.151529, "o", "\u001b[?2004h\u001b]0;sgutierrezg@Sebastian: /mnt/d/proyects/fullstack-javascript-project-138\u0007\u001b[01;32msgutierrezg@Sebastian\u001b[00m:\u001b[01;34m/mnt/d/proyects/fullstack-javascript-project-138\u001b[00m$ "]
+[23.726795, "o", "\u001b[?2004l\r\r\nexit\r\n"]

@@ -30,3 +30,6 @@ https://asciinema.org/connect/9077697b-061c-48c0-a7af-58aec0e9ffbe
 
 #Punto 3
 https://asciinema.org/connect/9077697b-061c-48c0-a7af-58aec0e9ffbe
+
+#Punto 4
+https://asciinema.org/connect/9077697b-061c-48c0-a7af-58aec0e9ffbe
