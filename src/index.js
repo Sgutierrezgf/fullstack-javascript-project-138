@@ -7,8 +7,16 @@ import { load } from 'cheerio';
 const sanitizeName = (url) => {
     const { hostname, pathname } = new URL(url);
     const full = `${hostname}${pathname}`;
-    const sanitized = full.replace(/[^a-zA-Z0-9]/g, '-');
-    return sanitized.endsWith('-') ? sanitized.slice(0, -1) : sanitized;
+    // separa la extensión si existe
+    const extMatch = full.match(/(\.[a-zA-Z0-9]+)$/);
+    const ext = extMatch ? extMatch[1] : '';
+    const base = ext ? full.slice(0, -ext.length) : full;
+
+    // reemplaza cualquier cosa que no sea alfanumérica por "-"
+    const sanitizedBase = base.replace(/[^a-zA-Z0-9]/g, '-');
+    const sanitized = sanitizedBase.replace(/-+/g, '-').replace(/-$/, '');
+
+    return ext ? `${sanitized}${ext}` : sanitized;
 };
 
 const downloadResource = async (resourceUrl, outputDir, baseHost) => {
