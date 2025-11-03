@@ -37,14 +37,22 @@ const downloadResource = async (resourceUrl, outputDir, baseHost) => {
 // 🔹 Ajuste del formato del HTML
 const normalizeHtml = (html) => {
     return html
-        // Agrega salto de línea entre etiquetas
-        .replace(/></g, '>\n<')
-        // Asegura que <script> y <link> cierren correctamente
-        .replace(/<script([^>]*)><\/script>/g, '<script$1></script>')
-        .replace(/<img([^>]*)>/g, '<img$1 />')
-        .replace(/<link([^>]*)>/g, '<link$1 />')
-        // Elimina saltos de más
-        .replace(/\n\s*\n/g, '\n');
+        // elimina saltos innecesarios dentro de etiquetas
+        .replace(/>\s+</g, '><')
+        // restaura espacios de indentación estándar
+        .replace(/<head>/, '    <head>')
+        .replace(/<\/head>/, '    </head>')
+        .replace(/<body>/, '    <body>')
+        .replace(/<\/body>/, '    </body>')
+        // fuerza autocierre donde corresponda
+        .replace(/<img([^>]*?)(?<!\/)>/g, '<img$1 />')
+        .replace(/<link([^>]*?)(?<!\/)>/g, '<link$1 />')
+        // pone <p> y </p> en una sola línea
+        .replace(/<p>(.*?)\s*<\/p>/g, '<p>$1</p>')
+        // fuerza los <script> en una sola línea
+        .replace(/<script([^>]*)>\s*<\/script>/g, '<script$1></script>')
+        // limpia saltos finales
+        .trim() + '\n';
 };
 
 const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
