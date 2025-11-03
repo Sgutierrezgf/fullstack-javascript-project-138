@@ -4,11 +4,15 @@ import path from 'path';
 import * as cheerio from 'cheerio';
 import debugLib from 'debug';
 import Listr from 'listr';
-import { makeFileName } from './utils.js'; // <-- tu util
 
 const debug = debugLib('page-loader');
 
-// Descarga cualquier recurso y devuelve su nombre de archivo
+const makeFileName = (url) => {
+    const { hostname, pathname } = new URL(url);
+    const fullPath = `${hostname}${pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
+    return fullPath.replace(/^-+|-+$/g, '');
+};
+
 const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
     try {
         const absoluteUrl = new URL(resourceUrl, baseUrl);
@@ -27,9 +31,11 @@ const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
         try {
             const res = await axios.get(absoluteUrl.href, { responseType: 'arraybuffer' });
             await fs.writeFile(filePath, res.data);
+            debug(`${ext} descargado: ${filePath}`);
             return fileName;
         } catch {
             await fs.writeFile(filePath, '');
+            debug(`Archivo vacío creado: ${filePath}`);
             return fileName;
         }
     } catch {
@@ -40,10 +46,9 @@ const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
 export default async function pageLoader(url, outputDir = process.cwd()) {
     debug(`Iniciando descarga de la página: ${url}`);
 
-    const baseName = makeFileName(url).replace('.html', '');
+    const baseName = makeFileName(url);
     const htmlFileName = `${baseName}.html`;
     const htmlFilePath = path.join(outputDir, htmlFileName);
-
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
 
@@ -79,8 +84,9 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
         if (!href || href.startsWith('#')) return;
         try {
             const abs = new URL(href, url);
-            const baseHost = new URL(url).hostname;
-            if (abs.hostname.endsWith(baseHost)) resources.push({ attr: 'href', el, isHtml: true });
+            if (abs.hostname === new URL(url).hostname) {
+                resources.push({ attr: 'href', el, isHtml: true });
+            }
         } catch { }
     });
 
@@ -100,29 +106,25 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
                         if (isHtml) {
                             const absUrl = new URL(src, url).href;
-
-                            // HTML interno igual a la página principal
-                            fileName = absUrl === url || absUrl === url + '/'
-                                ? `${baseName}.html`
-                                : makeFileName(absUrl);
-
+                            fileName = absUrl === url || absUrl === url + '/' ? `${baseName}.html` : `${makeFileName(absUrl)}.html`;
                             const filePath = path.join(assetsDirPath, fileName);
 
                             try {
                                 const res = await axios.get(absUrl);
                                 await fs.writeFile(filePath, res.data);
-                                debug(`HTML descargado: ${filePath}`);
+                                debug(`HTML interno descargado: ${filePath}`);
                             } catch {
                                 await fs.writeFile(filePath, '');
                                 debug(`Archivo HTML interno vacío creado: ${filePath}`);
                             }
                         } else {
-                            const downloaded = await downloadResource(src, url, assetsDirPath);
-                            fileName = downloaded;
-                            if (fileName) debug(`${path.extname(fileName)} descargado: ${path.join(assetsDirPath, fileName)}`);
+                            fileName = await downloadResource(src, url, assetsDirPath);
                         }
 
-                        if (fileName) $(el).attr(attr, `${assetsDirName}/${fileName}`);
+                        if (fileName) {
+                            $(el).attr(attr, `${assetsDirName}/${fileName}`);
+                        }
+
                         task.title = fileName ? `Procesado ${src}` : `Omitido ${src}`;
                     },
                 };
@@ -134,7 +136,7 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     await tasks.run();
 
     await fs.writeFile(htmlFilePath, $.html());
-    debug(`Archivo HTML final guardado en ${htmlFilePath}`);
+    debug(`Archivo HTML principal guardado en: ${htmlFilePath}`);
 
     return htmlFilePath;
 }
