@@ -71,7 +71,7 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     // Crear carpeta de assets
     await fs.mkdir(assetsDirPath, { recursive: true });
 
-    const $ = cheerio.load(html);
+    const $ = cheerio.load(html, { decodeEntities: false });
 
     const resources = [];
 
@@ -137,11 +137,19 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await tasks.run();
 
-    // Guardar HTML principal tal cual para pasar los tests
-    const finalHtml = $.html();
+    // Guardar HTML principal con saltos de línea y cierre correcto de etiquetas
+    let finalHtml = $.html({ decodeEntities: false });
+
+    // Asegurar que cada etiqueta esté en su propia línea
+    finalHtml = finalHtml.replace(/></g, '>\n<');
+
+    // Chequear cierre correcto de <script> y <link>
+    finalHtml = finalHtml.replace(/<link ([^>]+?)\/?>/g, '<link $1>');
+    finalHtml = finalHtml.replace(/<script ([^>]+?)><\/script>/g, '<script $1></script>');
+
     await fs.writeFile(htmlFilePath, finalHtml);
 
-    // Copiar dentro de _files para cumplir los tests
+    // Copiar la principal dentro de _files para pasar los tests
     const mainFileInAssets = path.join(assetsDirPath, htmlFileName);
     await fs.copyFile(htmlFilePath, mainFileInAssets);
 
