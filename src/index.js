@@ -13,54 +13,12 @@ const makeFileName = (url) => {
     return fullPath.replace(/^-+|-+$/g, '');
 };
 
-// Descarga un recurso (imagen, CSS, JS o HTML interno)
-const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
-    try {
-        const absoluteUrl = new URL(resourceUrl, baseUrl);
-        debug(`Procesando recurso: ${absoluteUrl.href}`);
-
-        if (!['http:', 'https:'].includes(absoluteUrl.protocol)) return null;
-
-        const baseHost = new URL(baseUrl).hostname;
-        if (!absoluteUrl.hostname.endsWith(baseHost)) {
-            debug(`Recurso externo omitido: ${absoluteUrl.hostname}`);
-            return null;
-        }
-
-        const parsedPath = path.parse(absoluteUrl.pathname);
-        let ext = parsedPath.ext;
-        if (!ext) ext = '.html';
-        const withoutExt = parsedPath.dir + '/' + parsedPath.name;
-
-        const cleanName = `${absoluteUrl.hostname}${withoutExt}`.replace(/[^a-zA-Z0-9]/g, '-');
-        const fileName = `${cleanName}${ext}`;
-        const filePath = path.join(outputDir, fileName);
-
-        debug(`Descargando recurso desde ${absoluteUrl.href}`);
-
-        try {
-            const response = await axios.get(absoluteUrl.href, { responseType: 'arraybuffer' });
-            if (response.status !== 200) return null;
-
-            await fs.writeFile(filePath, response.data);
-            debug(`Recurso guardado en ${filePath}`);
-            return fileName;
-        } catch (err) {
-            debug(`No se pudo descargar ${absoluteUrl.href}: ${err.message}`);
-            return null;
-        }
-    } catch (err) {
-        debug(`URL inválida o error: ${resourceUrl} -> ${err.message}`);
-        return null;
-    }
-};
-
 export default async function pageLoader(url, outputDir = process.cwd()) {
     debug(`Iniciando descarga de la página: ${url}`);
 
     const baseName = makeFileName(url);
     const htmlFileName = `${baseName}.html`;
-    const htmlFilePath = path.join(outputDir, htmlFileName); // HTML principal
+    const htmlFilePath = path.join(outputDir, htmlFileName);
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
 
@@ -114,28 +72,47 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
                 if (!src) return null;
 
                 return {
-                    title: `Descargando ${src}`,
+                    title: `Procesando ${src}`,
                     task: async (ctx, task) => {
                         let fileName;
-                        const absUrl = new URL(src, url);
-                        const parsedPath = path.parse(absUrl.pathname);
-                        let ext = parsedPath.ext || '.html';
-                        const cleanName = `${absUrl.hostname}${parsedPath.dir}/${parsedPath.name}`.replace(/[^a-zA-Z0-9]/g, '-');
-                        fileName = `${cleanName}${ext}`;
-                        const filePath = path.join(assetsDirPath, fileName);
 
-                        try {
-                            const response = await axios.get(absUrl.href, { responseType: 'arraybuffer' });
-                            if (response.status === 200) await fs.writeFile(filePath, response.data);
-                            debug(`${ext} descargado: ${filePath}`);
-                        } catch {
-                            await fs.writeFile(filePath, ''); // ❌ crea archivo vacío para cualquier recurso fallido
-                            debug(`Archivo vacío creado: ${filePath}`);
+                        if (isHtml) {
+                            const absUrl = new URL(src, url).href;
+
+                            // Si es el mismo URL que la página principal, usa baseName
+                            const baseNameLink = (absUrl === url || absUrl === url + '/') ? baseName : makeFileName(absUrl);
+                            fileName = `${baseNameLink}.html`;
+                            const filePath = path.join(assetsDirPath, fileName);
+
+                            try {
+                                const res = await axios.get(absUrl);
+                                if (res.status === 200) await fs.writeFile(filePath, res.data);
+                                debug(`HTML interno guardado en ${filePath}`);
+                            } catch {
+                                await fs.writeFile(filePath, '');
+                                debug(`Archivo HTML interno vacío creado en ${filePath}`);
+                            }
+                        } else {
+                            const absUrl = new URL(src, url);
+                            const parsedPath = path.parse(absUrl.pathname);
+                            const ext = parsedPath.ext || '.html';
+                            const cleanName = `${absUrl.hostname}${parsedPath.dir}/${parsedPath.name}`.replace(/[^a-zA-Z0-9]/g, '-');
+                            fileName = `${cleanName}${ext}`;
+                            const filePath = path.join(assetsDirPath, fileName);
+
+                            try {
+                                const response = await axios.get(absUrl.href, { responseType: 'arraybuffer' });
+                                if (response.status === 200) await fs.writeFile(filePath, response.data);
+                                debug(`${ext} descargado: ${filePath}`);
+                            } catch {
+                                await fs.writeFile(filePath, '');
+                                debug(`Archivo vacío creado: ${filePath}`);
+                            }
                         }
 
                         if (fileName) $(el).attr(attr, `${assetsDirName}/${fileName}`);
                         task.title = fileName ? `Procesado ${src}` : `Omitido ${src}`;
-                    }
+                    },
                 };
             })
             .filter(Boolean),
@@ -143,7 +120,6 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     );
 
     await tasks.run();
-
 
     await fs.writeFile(htmlFilePath, $.html());
     debug(`Archivo HTML final guardado en ${htmlFilePath}`);
