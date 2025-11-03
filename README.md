@@ -19,3 +19,14 @@ npm install
 
 # link local para usar el CLI globalmente durante desarrollo
 npm link
+
+
+# Grabaciones 
+#Punto 1
+https://asciinema.org/connect/9077697b-061c-48c0-a7af-58aec0e9ffbe
+
+#Punt 2
+https://asciinema.org/connect/9077697b-061c-48c0-a7af-58aec0e9ffbe
+
+#Punto 3
+https://asciinema.org/connect/9077697b-061c-48c0-a7af-58aec0e9ffbe

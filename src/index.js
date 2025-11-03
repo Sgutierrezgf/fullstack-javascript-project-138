@@ -9,18 +9,32 @@ const makeFileName = (url) => {
     return fullPath.replace(/^-+|-+$/g, '');
 };
 
-const downloadImage = async (src, baseUrl, outputDir) => {
-    const imageUrl = new URL(src, baseUrl).href;
-    const cleanName = `${new URL(imageUrl).hostname}${new URL(imageUrl).pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
-    const fileName = `${cleanName}${path.extname(imageUrl)}`;
-    const filePath = path.join(outputDir, fileName);
+const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
+    try {
+        const absoluteUrl = new URL(resourceUrl, baseUrl);
 
-    const { data } = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-    await fs.writeFile(filePath, data);
+        if (!['http:', 'https:'].includes(absoluteUrl.protocol)) return null;
 
-    return fileName;
+        const baseHost = new URL(baseUrl).hostname;
+        if (!absoluteUrl.hostname.endsWith(baseHost)) return null;
+
+        const parsedPath = path.parse(absoluteUrl.pathname);
+        const ext = parsedPath.ext || '.html';
+        const withoutExt = parsedPath.dir + '/' + parsedPath.name;
+
+        const cleanName = `${absoluteUrl.hostname}${withoutExt}`.replace(/[^a-zA-Z0-9]/g, '-');
+        const fileName = `${cleanName}${ext}`;
+        const filePath = path.join(outputDir, fileName);
+
+        const { data } = await axios.get(absoluteUrl.href, { responseType: 'arraybuffer' });
+        await fs.writeFile(filePath, data);
+
+        return fileName;
+    } catch (error) {
+        console.warn(`⚠️  No se pudo descargar ${resourceUrl}: ${error.message}`);
+        return null;
+    }
 };
-
 export default async function pageLoader(url, outputDir = process.cwd()) {
     const baseName = makeFileName(url);
     const htmlFileName = `${baseName}.html`;
@@ -34,19 +48,30 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await fs.mkdir(assetsDirPath, { recursive: true });
 
-    const imgTags = $('img').toArray();
+    const resources = [];
 
-    const downloads = imgTags.map(async (img) => {
-        const src = $(img).attr('src');
+    $('img').each((_, el) => resources.push({ attr: 'src', el }));
+    $('link').each((_, el) => {
+        if ($(el).attr('rel') !== 'canonical') {
+            resources.push({ attr: 'href', el });
+        }
+    });
+    $('script').each((_, el) => {
+        if ($(el).attr('src')) resources.push({ attr: 'src', el });
+    });
+
+    const downloads = resources.map(async ({ attr, el }) => {
+        const src = $(el).attr(attr);
         if (!src) return;
 
-        const fileName = await downloadImage(src, url, assetsDirPath);
-        $(img).attr('src', `${assetsDirName}/${fileName}`);
+        const fileName = await downloadResource(src, url, assetsDirPath);
+        if (fileName) {
+            $(el).attr(attr, `${assetsDirName}/${fileName}`);
+        }
     });
 
     await Promise.all(downloads);
 
     await fs.writeFile(htmlFilePath, $.html());
-
     return htmlFilePath;
 }
