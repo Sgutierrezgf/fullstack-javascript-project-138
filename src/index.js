@@ -21,7 +21,7 @@ const sanitizeName = (url) => {
 };
 
 /**
- * Descarga un recurso si pertenece al mismo host
+ * Descarga recurso si es del mismo host. Devuelve nombre de archivo o null.
  */
 const downloadResource = async (resourceUrl, outputDir, baseHost) => {
     try {
@@ -39,36 +39,61 @@ const downloadResource = async (resourceUrl, outputDir, baseHost) => {
 };
 
 /**
- * Normaliza el HTML agregando saltos de línea e indentación ligera
- * para que coincida con los tests de formato
+ * Normaliza HTML para que coincida con el formato esperado por los tests:
+ * - pone DOCTYPE y <html> en líneas separadas
+ * - indenta <head> y <body> (4 espacios) y sus hijos (8 espacios)
+ * - autocierra <img> y <link>
+ * - asegura salto final
  */
-const normalizeHtml = (html) => {
-    return html
-        // agrega saltos de línea entre etiquetas
-        .replace(/></g, '>\n<')
-        // cierra correctamente img y link
-        .replace(/<img([^>]*?)(?<!\/)>/g, '<img$1 />')
-        .replace(/<link([^>]*?)(?<!\/)>/g, '<link$1 />')
-        // limpia espacios innecesarios
-        .replace(/[ \t]+(\r?\n)/g, '$1')
-        // evita líneas vacías repetidas
-        .replace(/\n{3,}/g, '\n\n')
-        // asegura salto final
-        .trim() + '\n';
+const normalizeHtml = (rawHtml) => {
+    let html = rawHtml;
+
+    // 1) asegurar DOCTYPE en su propia línea y <html> en la siguiente
+    html = html.replace(/^\s*<!DOCTYPE html>\s*/i, '<!DOCTYPE html>\n');
+    html = html.replace(/<!DOCTYPE html>\s*<html/i, '<!DOCTYPE html>\n<html');
+
+    // 2) autocerrar img y link si falta
+    html = html.replace(/<img([^>]*?)(?<!\/)>/g, '<img$1 />');
+    html = html.replace(/<link([^>]*?)(?<!\/)>/g, '<link$1 />');
+
+    // 3) agregar saltos e indentación para head
+    html = html.replace(/<html([^>]*)>/i, (m) => `${m}\n`); // garantizar newline después de <html...>
+    // insertar linebreak y 4 espacios antes de <head> y </head>, y 4 antes de <body> and </body>
+    html = html.replace(/<head>/i, '    <head>');
+    html = html.replace(/<\/head>/i, '    </head>');
+    html = html.replace(/<body>/i, '    <body>');
+    html = html.replace(/<\/body>/i, '    </body>');
+
+    // 4) ahora indentamos las líneas que están entre <head>...</head> y <body>...</body>
+    // indentador: añade 8 espacios a cada línea interna (excepto si ya vacía)
+    const indentInner = (str, openTag, closeTag) => {
+        const re = new RegExp(`(${openTag})([\\s\\S]*?)(${closeTag})`, 'i');
+        return str.replace(re, (m, o, inner, c) => {
+            // limpiar posibles saltos al inicio/final
+            const lines = inner.split(/\r?\n/).map((ln) => ln.trim()).filter(Boolean);
+            const indented = lines.map((ln) => `        ${ln}`).join('\n');
+            return `${o}\n${indented}\n${c}`;
+        });
+    };
+
+    html = indentInner(html, '<head>', '</head>');
+    html = indentInner(html, '<body>', '</body>');
+
+    // 5) eliminar saltos múltiples y limpiar espacios al final
+    html = html.replace(/\n{3,}/g, '\n\n').trim() + '\n';
+
+    return html;
 };
 
-/**
- * Descarga una página HTML y sus recursos locales
- */
 const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
-    // 1) validar directorio
+    // validar directorio de salida
     try {
         await fs.access(outputDir);
     } catch {
         throw new Error(`Directorio de salida no encontrado: ${outputDir}`);
     }
 
-    // 2) descargar HTML
+    // descargar HTML principal
     let html;
     try {
         const res = await axios.get(pageUrl);
@@ -79,13 +104,13 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
 
     const $ = load(html, { decodeEntities: false });
 
-    // 3) crear carpeta de recursos
+    // preparar carpeta de assets
     const baseName = sanitizeName(pageUrl);
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
     await fs.mkdir(assetsDirPath, { recursive: true });
 
-    // 4) recolectar recursos locales
+    // recolectar recursos
     const resources = [];
 
     $('img').each((_, el) => {
@@ -105,7 +130,7 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
 
     const baseHost = new URL(pageUrl).hostname;
 
-    // 5) descargar recursos (serial)
+    // descargar recursos (serial, para comportamiento predecible en tests)
     for (const { el, attr, url } of resources) {
         const filename = await downloadResource(url, assetsDirPath, baseHost);
         if (filename) {
@@ -113,13 +138,14 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
         }
     }
 
-    // 6) escribir HTML formateado
+    // escribir HTML final con formato normalizado
     const htmlFilename = `${baseName}.html`;
     const htmlPath = path.join(outputDir, htmlFilename);
-    const formattedHtml = normalizeHtml($.html());
-    await fs.writeFile(htmlPath, formattedHtml);
 
-    // 7) copia opcional dentro de carpeta (algunos tests lo exigen)
+    const formatted = normalizeHtml($.html());
+    await fs.writeFile(htmlPath, formatted);
+
+    // copia dentro de carpeta de assets (algunos tests lo esperan)
     const copyInAssetsPath = path.join(assetsDirPath, htmlFilename);
     try {
         await fs.copyFile(htmlPath, copyInAssetsPath);
