@@ -145,6 +145,7 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await tasks.run();
 
+
     await fs.writeFile(htmlFilePath, $.html());
     debug(`Archivo HTML final guardado en ${htmlFilePath}`);
 
