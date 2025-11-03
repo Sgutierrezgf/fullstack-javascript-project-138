@@ -1,12 +1,15 @@
-const fs = require('fs/promises');
-const path = require('path');
-const axios = require('axios');
-const { load } = require('cheerio');
+// src/index.js
+import fs from 'fs/promises';
+import path from 'path';
+import axios from 'axios';
+import { load } from 'cheerio';
 
+/**
+ * Convierte URL en nombre seguro para archivo/directorio
+ */
 const sanitizeName = (url) => {
     const { hostname, pathname } = new URL(url);
     const full = `${hostname}${pathname}`;
-
     const extMatch = full.match(/(\.[a-zA-Z0-9]+)$/);
     const ext = extMatch ? extMatch[1] : '';
     const base = ext ? full.slice(0, -ext.length) : full;
@@ -17,12 +20,13 @@ const sanitizeName = (url) => {
     return ext ? `${sanitized}${ext}` : sanitized;
 };
 
+/**
+ * Descarga recurso si es del mismo host. Devuelve nombre de archivo o null.
+ */
 const downloadResource = async (resourceUrl, outputDir, baseHost) => {
     try {
         const abs = new URL(resourceUrl);
-        if (!abs.hostname.endsWith(baseHost)) {
-            return null;
-        }
+        if (!abs.hostname.endsWith(baseHost)) return null;
 
         const { data } = await axios.get(abs.href, { responseType: 'arraybuffer' });
         const filename = sanitizeName(abs.href);
@@ -34,30 +38,15 @@ const downloadResource = async (resourceUrl, outputDir, baseHost) => {
     }
 };
 
-// 🔹 Normaliza formato HTML
-const normalizeHtml = (html) => {
-    return (
-        html
-            .replace(/>\s+</g, '><')
-            .replace(/<head>/, '    <head>')
-            .replace(/<\/head>/, '    </head>')
-            .replace(/<body>/, '    <body>')
-            .replace(/<\/body>/, '    </body>')
-            .replace(/<img([^>]*?)(?<!\/)>/g, '<img$1 />')
-            .replace(/<link([^>]*?)(?<!\/)>/g, '<link$1 />')
-            .replace(/<p>(.*?)\s*<\/p>/g, '<p>$1</p>')
-            .replace(/<script([^>]*)>\s*<\/script>/g, '<script$1></script>')
-            .trim() + '\n'
-    );
-};
-
 const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
+    // 1) validar directorio de salida
     try {
         await fs.access(outputDir);
     } catch {
         throw new Error(`Directorio de salida no encontrado: ${outputDir}`);
     }
 
+    // 2) descargar HTML principal
     let html;
     try {
         const res = await axios.get(pageUrl);
@@ -68,11 +57,13 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
 
     const $ = load(html, { decodeEntities: false });
 
+    // 3) preparar carpeta de assets
     const baseName = sanitizeName(pageUrl);
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
     await fs.mkdir(assetsDirPath, { recursive: true });
 
+    // 4) recolectar recursos (img, link[rel=stylesheet], script[src])
     const resources = [];
 
     $('img').each((_, el) => {
@@ -92,24 +83,29 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
 
     const baseHost = new URL(pageUrl).hostname;
 
+    // 5) procesar recursos (serial para tests predecibles)
     for (const { el, attr, url } of resources) {
         const filename = await downloadResource(url, assetsDirPath, baseHost);
         if (filename) {
             $(el).attr(attr, path.join(assetsDirName, filename));
         }
+        // si filename es null dejamos la url original (los tests usan nock para recursos externos)
     }
 
+    // 6) escribir HTML final (sin manipular saltos de línea)
     const htmlFilename = `${baseName}.html`;
     const htmlPath = path.join(outputDir, htmlFilename);
-    const formattedHtml = normalizeHtml($.html());
-    await fs.writeFile(htmlPath, formattedHtml);
+    await fs.writeFile(htmlPath, $.html());
 
+    // 7) copia opcional dentro de carpeta de assets (algunos tests la esperan)
     const copyInAssetsPath = path.join(assetsDirPath, htmlFilename);
     try {
         await fs.copyFile(htmlPath, copyInAssetsPath);
-    } catch { }
+    } catch {
+        // no crítico
+    }
 
     return htmlPath;
 };
 
-module.exports = pageLoader;
+export default pageLoader;
