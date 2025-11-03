@@ -27,19 +27,21 @@ const buildResourceName = (resourceUrl, baseHost) => {
     const { hostname, pathname } = new URL(resourceUrl);
     const ext = path.extname(pathname) || '.html';
     const baseName = pathname === '/' ? 'index' : pathname.replace(/^\/|\/$/g, '');
-    const safe = `${hostname.endsWith(baseHost) ? '' : hostname + '-'}` +
-        baseName.replace(/[^a-zA-Z0-9]/g, '-');
+    // Usar hostname solo si NO es el mismo host para evitar colisiones con recursos locales
+    const prefix = hostname === baseHost ? '' : `${hostname}-`;
+    const safe = `${prefix}${baseName.replace(/[^a-zA-Z0-9]/g, '-')}`;
     return safe + ext;
 };
 
 /**
- * Descarga recurso si pertenece al mismo host y lo guarda en outputDir.
+ * Descarga recurso si pertenece al mismo host EXACTO y lo guarda en outputDir.
  * Devuelve el nombre de archivo o null si se ignora.
  */
 const downloadResource = async (resourceUrl, outputDir, baseHost) => {
     try {
         const abs = new URL(resourceUrl);
-        if (!abs.hostname.endsWith(baseHost)) return null;
+        // <-- Aquí: verificar igualdad exacta (no subdominios)
+        if (abs.hostname !== baseHost) return null;
 
         const { data } = await axios.get(abs.href, { responseType: 'arraybuffer' });
         const filename = buildResourceName(abs.href, baseHost);
@@ -47,7 +49,7 @@ const downloadResource = async (resourceUrl, outputDir, baseHost) => {
         await fs.writeFile(filePath, data);
         return filename;
     } catch (err) {
-        console.error(`Error descargando ${resourceUrl}: ${err.message}`);
+        // Silenciar detalles excesivos: devolver null para que el flujo siga.
         return null;
     }
 };
@@ -101,6 +103,7 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
     for (const { el, attr, url } of resources) {
         const filename = await downloadResource(url, assetsDirPath, baseHost);
         if (filename) {
+            // actualizar referencia a ruta relativa dentro de la carpeta *_files
             $(el).attr(attr, path.join(assetsDirName, filename));
         }
     }
