@@ -139,19 +139,11 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
     }
 
     // escribir HTML final con formato normalizado
-    const htmlFilename = `${baseName}.html`;
+    const htmlFilename = `${sanitizeName(pageUrl)}.html`;
     const htmlPath = path.join(outputDir, htmlFilename);
 
-    const formatted = normalizeHtml($.html());
-    await fs.writeFile(htmlPath, formatted);
-
-    // copia dentro de carpeta de assets (algunos tests lo esperan)
-    const copyInAssetsPath = path.join(assetsDirPath, htmlFilename);
-    try {
-        await fs.copyFile(htmlPath, copyInAssetsPath);
-    } catch {
-        // no crítico
-    }
+    // Evitar reformateo y cierres automáticos
+    await fs.writeFile(htmlPath, $.html({ decodeEntities: false, selfClosingTags: false }));
 
     return htmlPath;
 };
