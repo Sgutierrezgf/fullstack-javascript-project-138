@@ -152,8 +152,8 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await tasks.run();
 
-    await fs.writeFile(htmlFilePath, $.html());
-    debug(`Archivo HTML final guardado en ${htmlFilePath}`);
-
-    return htmlFilePath;
+    const htmlInsideAssetsPath = path.join(assetsDirPath, `${baseName}.html`);
+    await fs.writeFile(htmlInsideAssetsPath, $.html());
+    debug(`Archivo HTML final guardado en ${htmlInsideAssetsPath}`);
+    return htmlInsideAssetsPath;
 }
