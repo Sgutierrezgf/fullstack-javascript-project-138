@@ -1,7 +1,7 @@
-import fs from 'fs/promises';
-import path from 'path';
-import axios from 'axios';
-import { load } from 'cheerio';
+const fs = require('fs/promises');
+const path = require('path');
+const axios = require('axios');
+const { load } = require('cheerio');
 
 const sanitizeName = (url) => {
     const { hostname, pathname } = new URL(url);
@@ -34,25 +34,21 @@ const downloadResource = async (resourceUrl, outputDir, baseHost) => {
     }
 };
 
-// 🔹 Ajuste del formato del HTML
+// 🔹 Normaliza formato HTML
 const normalizeHtml = (html) => {
-    return html
-        // elimina saltos innecesarios dentro de etiquetas
-        .replace(/>\s+</g, '><')
-        // restaura espacios de indentación estándar
-        .replace(/<head>/, '    <head>')
-        .replace(/<\/head>/, '    </head>')
-        .replace(/<body>/, '    <body>')
-        .replace(/<\/body>/, '    </body>')
-        // fuerza autocierre donde corresponda
-        .replace(/<img([^>]*?)(?<!\/)>/g, '<img$1 />')
-        .replace(/<link([^>]*?)(?<!\/)>/g, '<link$1 />')
-        // pone <p> y </p> en una sola línea
-        .replace(/<p>(.*?)\s*<\/p>/g, '<p>$1</p>')
-        // fuerza los <script> en una sola línea
-        .replace(/<script([^>]*)>\s*<\/script>/g, '<script$1></script>')
-        // limpia saltos finales
-        .trim() + '\n';
+    return (
+        html
+            .replace(/>\s+</g, '><')
+            .replace(/<head>/, '    <head>')
+            .replace(/<\/head>/, '    </head>')
+            .replace(/<body>/, '    <body>')
+            .replace(/<\/body>/, '    </body>')
+            .replace(/<img([^>]*?)(?<!\/)>/g, '<img$1 />')
+            .replace(/<link([^>]*?)(?<!\/)>/g, '<link$1 />')
+            .replace(/<p>(.*?)\s*<\/p>/g, '<p>$1</p>')
+            .replace(/<script([^>]*)>\s*<\/script>/g, '<script$1></script>')
+            .trim() + '\n'
+    );
 };
 
 const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
@@ -116,4 +112,4 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
     return htmlPath;
 };
 
-export default pageLoader;
+module.exports = pageLoader;
