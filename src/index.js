@@ -137,11 +137,11 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await tasks.run();
 
-    // Guardar HTML principal con saltos de línea entre etiquetas
-    const finalHtml = $.html({ decodeEntities: false }).replace(/></g, '>\n<');
+    // Guardar HTML principal tal cual para pasar los tests
+    const finalHtml = $.html();
     await fs.writeFile(htmlFilePath, finalHtml);
 
-    // Copiar la principal dentro de _files para pasar los tests
+    // Copiar dentro de _files para cumplir los tests
     const mainFileInAssets = path.join(assetsDirPath, htmlFileName);
     await fs.copyFile(htmlFilePath, mainFileInAssets);
 
