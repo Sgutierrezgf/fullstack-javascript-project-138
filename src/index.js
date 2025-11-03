@@ -14,23 +14,24 @@ const makeFileName = (url) => {
     return fullPath.replace(/^-+|-+$/g, '');
 };
 
-// Descarga recursos (CSS, JS, imágenes)
+// Descarga cualquier recurso y devuelve su nombre de archivo
 const downloadResource = async (resourceUrl, baseUrl, outputDir) => {
     try {
-        const absUrl = new URL(resourceUrl, baseUrl);
-        if (!['http:', 'https:'].includes(absUrl.protocol)) return null;
+        const absoluteUrl = new URL(resourceUrl, baseUrl);
+
+        if (!['http:', 'https:'].includes(absoluteUrl.protocol)) return null;
 
         const baseHost = new URL(baseUrl).hostname;
-        if (!absUrl.hostname.endsWith(baseHost)) return null;
+        if (!absoluteUrl.hostname.endsWith(baseHost)) return null;
 
-        const parsed = path.parse(absUrl.pathname);
-        const ext = parsed.ext || '.html';
-        const cleanName = `${absUrl.hostname}${parsed.dir}/${parsed.name}`.replace(/[^a-zA-Z0-9]/g, '-');
+        const parsedPath = path.parse(absoluteUrl.pathname);
+        const ext = parsedPath.ext || '.html';
+        const cleanName = `${absoluteUrl.hostname}${parsedPath.dir}/${parsedPath.name}`.replace(/[^a-zA-Z0-9]/g, '-');
         const fileName = `${cleanName}${ext}`;
         const filePath = path.join(outputDir, fileName);
 
         try {
-            const res = await axios.get(absUrl.href, { responseType: 'arraybuffer' });
+            const res = await axios.get(absoluteUrl.href, { responseType: 'arraybuffer' });
             await fs.writeFile(filePath, res.data);
             return fileName;
         } catch {
@@ -51,7 +52,6 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
 
-    // Verificar directorio de salida
     try {
         await fs.access(outputDir);
     } catch {
@@ -67,7 +67,6 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
         throw new Error(`Fallo al descargar la página principal ${url}: ${err.message}`);
     }
 
-    // Crear carpeta de assets
     await fs.mkdir(assetsDirPath, { recursive: true });
 
     const $ = cheerio.load(html);
@@ -77,8 +76,7 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
     // Recursos estáticos
     $('img').each((_, el) => resources.push({ attr: 'src', el }));
     $('link').each((_, el) => {
-        const rel = $(el).attr('rel');
-        if (rel !== 'canonical') resources.push({ attr: 'href', el });
+        if ($(el).attr('rel') !== 'canonical') resources.push({ attr: 'href', el });
     });
     $('script').each((_, el) => {
         if ($(el).attr('src')) resources.push({ attr: 'src', el });
@@ -112,17 +110,15 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
                         if (isHtml) {
                             const absUrl = new URL(src, url).href;
-                            if (absUrl === url || absUrl === url + '/') {
-                                fileName = htmlFileName; // HTML principal
-                            } else {
-                                fileName = `${makeFileName(absUrl)}.html`;
-                                const filePath = path.join(assetsDirPath, fileName);
-                                try {
-                                    const res = await axios.get(absUrl);
-                                    await fs.writeFile(filePath, res.data);
-                                } catch {
-                                    await fs.writeFile(filePath, '');
-                                }
+                            fileName = (absUrl === url || absUrl === url + '/')
+                                ? `${baseName}.html`
+                                : `${makeFileName(absUrl)}.html`;
+                            const filePath = path.join(assetsDirPath, fileName);
+                            try {
+                                const res = await axios.get(absUrl);
+                                await fs.writeFile(filePath, res.data);
+                            } catch {
+                                await fs.writeFile(filePath, '');
                             }
                         } else {
                             fileName = await downloadResource(src, url, assetsDirPath);
@@ -139,11 +135,20 @@ export default async function pageLoader(url, outputDir = process.cwd()) {
 
     await tasks.run();
 
-    // Guardar HTML principal con saltos de línea
-    const finalHtml = $.html({ decodeEntities: false }).replace(/></g, '>\n<');
+    // Guardar HTML principal respetando formato esperado por los tests
+    let finalHtml = $.html({ decodeEntities: false });
+
+    // Reemplazo de saltos de línea solo entre etiquetas top-level
+    finalHtml = finalHtml
+        .replace(/>\s*</g, '><')           // elimina espacios innecesarios
+        .replace(/<head>/, '<head>\n')
+        .replace(/<\/head>/, '\n</head>')
+        .replace(/<body>/, '<body>\n')
+        .replace(/<\/body>/, '\n</body>');
+
     await fs.writeFile(htmlFilePath, finalHtml);
 
-    // Copiar HTML principal dentro de _files
+    // Copiar la principal dentro de _files
     const mainFileInAssets = path.join(assetsDirPath, htmlFileName);
     await fs.copyFile(htmlFilePath, mainFileInAssets);
 
