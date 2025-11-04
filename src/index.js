@@ -21,18 +21,17 @@ const sanitizeName = (url) => {
 
 /**
  * Genera un nombre de archivo limpio para un recurso (CSS, JS, imagen, etc.)
- * usando el path relativo y conservando la extensión.
+ * usando el nombre base de la página principal como prefijo.
  */
 const buildResourceName = (resourceUrl, baseUrl) => {
-    const { hostname, pathname } = new URL(resourceUrl);
+    const { pathname } = new URL(resourceUrl);
     const ext = path.extname(pathname) || '.html';
-
-    // baseName de la página principal
     const baseName = sanitizeName(baseUrl);
 
-    // path limpio del recurso
+    // Limpia el path del recurso (por ejemplo "assets/styles.css" → "assets-styles.css")
     const cleanPath = pathname.replace(/^\/|\/$/g, '').replace(/[^a-zA-Z0-9]/g, '-');
 
+    // Combina el nombre base de la página con el path del recurso
     return `${baseName}-${cleanPath}${ext}`;
 };
 
@@ -40,19 +39,17 @@ const buildResourceName = (resourceUrl, baseUrl) => {
  * Descarga recurso si pertenece al mismo host EXACTO y lo guarda en outputDir.
  * Devuelve el nombre de archivo o null si se ignora.
  */
-const downloadResource = async (resourceUrl, outputDir, baseHost) => {
+const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
     try {
         const abs = new URL(resourceUrl);
-        // <-- Aquí: verificar igualdad exacta (no subdominios)
         if (abs.hostname !== baseHost) return null;
 
         const { data } = await axios.get(abs.href, { responseType: 'arraybuffer' });
-        const filename = buildResourceName(abs.href, `https://${baseHost}`);
+        const filename = buildResourceName(abs.href, baseUrl);
         const filePath = path.join(outputDir, filename);
         await fs.writeFile(filePath, data);
         return filename;
-    } catch (err) {
-        // Silenciar detalles excesivos: devolver null para que el flujo siga.
+    } catch {
         return null;
     }
 };
@@ -104,14 +101,13 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
 
     // descargar recursos (serialmente para predecibilidad en tests)
     for (const { el, attr, url } of resources) {
-        const filename = await downloadResource(url, assetsDirPath, baseHost);
+        const filename = await downloadResource(url, assetsDirPath, baseHost, pageUrl);
         if (filename) {
-            // actualizar referencia a ruta relativa dentro de la carpeta *_files
             $(el).attr(attr, path.join(assetsDirName, filename));
         }
     }
 
-    // escribir HTML final (sin formateo adicional)
+    // escribir HTML final
     const htmlFilename = `${baseName}.html`;
     const htmlPath = path.join(outputDir, htmlFilename);
     await fs.writeFile(htmlPath, $.html({ decodeEntities: false }));
