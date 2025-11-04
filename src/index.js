@@ -77,29 +77,36 @@ const tryGet = async (url) => {
 const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
     try {
         const abs = new URL(resourceUrl);
-        console.log(`[page-loader] trying resource: ${resourceUrl} -> hostname: ${abs.hostname}`);
-
         if (abs.hostname !== baseHost) {
             console.log(`[page-loader] skipped (different host): ${abs.hostname} !== ${baseHost}`);
             return null;
         }
 
-        const res = await tryGet(abs.href);
-        const data = res.data;
+        // Detectar si es HTML
+        const isHtml = !path.extname(abs.pathname) || path.extname(abs.pathname) === '.html';
+        const res = await axios.get(abs.href, { responseType: isHtml ? 'text' : 'arraybuffer' });
 
+        const data = res.data;
         let filename = buildResourceName(abs.href, baseUrl);
         if (!path.extname(filename)) {
             filename += '.html';
         }
 
         const filePath = path.join(outputDir, filename);
-        await fs.writeFile(filePath, Buffer.from(data));
+
+        // Si es HTML, guarda directamente texto UTF-8
+        if (isHtml) {
+            await fs.writeFile(filePath, data, 'utf8');
+        } else {
+            await fs.writeFile(filePath, Buffer.from(data));
+        }
+
         console.log(`[page-loader] saved: ${filePath}`);
         return filename;
     } catch (err) {
         console.error(`[page-loader] error downloading ${resourceUrl}:`, err.message);
 
-        // 🩵 FIX: crear archivo vacío si es un HTML esperado (misma base y termina en .html)
+        // fallback solo si no hay mock (404)
         const candidateName = buildResourceName(resourceUrl, baseUrl);
         if (path.extname(candidateName) === '.html') {
             const fallbackPath = path.join(outputDir, candidateName);
