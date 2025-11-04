@@ -21,22 +21,43 @@ const sanitizeName = (url) => {
 
 /**
  * Genera un nombre de archivo limpio para un recurso (CSS, JS, imagen, HTML, etc.)
- * usando solo el hostname del sitio base como prefijo.
+ * reglas:
+ *  - si el recurso apunta al "parent path" de la página (p.ej /blog desde /blog/about),
+ *    guardamos con el nombre base de la página principal (site-com-blog-about.html).
+ *  - en caso contrario, usamos hostname + cleanPath (ej: site-com-assets-style.css).
  */
 const buildResourceName = (resourceUrl, baseUrl) => {
-    const { pathname } = new URL(resourceUrl);
+    const res = new URL(resourceUrl);
+    const base = new URL(baseUrl);
+
+    const pathname = res.pathname;
     const ext = path.extname(pathname) || '.html';
 
-    // Solo hostname como prefijo (ej: site.com -> site-com)
-    const baseHost = new URL(baseUrl).hostname;
-    const baseName = baseHost.replace(/[^a-zA-Z0-9]/g, '-');
+    // Nombre base de la página principal (ej: site-com-blog-about)
+    const pageBaseName = sanitizeName(baseUrl);
+
+    // Determinar parent path de la página principal: dirname('/blog/about') -> '/blog'
+    const basePath = base.pathname.replace(/\/$/, ''); // quitar slash final
+    const parentPath = path.posix.dirname(basePath === '' ? '/' : basePath);
+
+    // Normalizar rutas para comparar (sin slash final)
+    const normResPath = pathname.replace(/\/$/, '') || '/';
+    const normParent = parentPath.replace(/\/$/, '') || '/';
+
+    // Si el recurso apunta exactamente al parentPath -> usar pageBaseName.html
+    if (normResPath === normParent) {
+        return `${pageBaseName}.html`;
+    }
+
+    // Si no, usar hostname como prefijo y el path limpio
+    const baseHost = base.hostname.replace(/[^a-zA-Z0-9]/g, '-');
 
     const pathWithoutExt = ext ? pathname.slice(0, -ext.length) : pathname;
     let cleanPath = pathWithoutExt.replace(/^\/|\/$/g, '');
     if (cleanPath === '') cleanPath = 'index';
     cleanPath = cleanPath.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/-$/, '');
 
-    return `${baseName}-${cleanPath}${ext}`;
+    return `${baseHost}-${cleanPath}${ext}`;
 };
 
 /**
@@ -122,7 +143,6 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
     $('a[href]').each((_, el) => {
         const href = $(el).attr('href');
         if (!href) return;
-        // Ignorar anchors y esquemas que no sean http(s)
         if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
         try {
             const absUrl = new URL(href, pageUrl).href;
