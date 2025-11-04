@@ -23,14 +23,17 @@ const sanitizeName = (url) => {
  * Genera un nombre de archivo limpio para un recurso (CSS, JS, imagen, etc.)
  * usando el path relativo y conservando la extensión.
  */
-const buildResourceName = (resourceUrl, baseHost) => {
+const buildResourceName = (resourceUrl, baseUrl) => {
     const { hostname, pathname } = new URL(resourceUrl);
     const ext = path.extname(pathname) || '.html';
-    const baseName = pathname === '/' ? 'index' : pathname.replace(/^\/|\/$/g, '');
-    // Usar hostname solo si NO es el mismo host para evitar colisiones con recursos locales
-    const prefix = hostname === baseHost ? '' : `${hostname}-`;
-    const safe = `${prefix}${baseName.replace(/[^a-zA-Z0-9]/g, '-')}`;
-    return safe + ext;
+
+    // baseName de la página principal
+    const baseName = sanitizeName(baseUrl);
+
+    // path limpio del recurso
+    const cleanPath = pathname.replace(/^\/|\/$/g, '').replace(/[^a-zA-Z0-9]/g, '-');
+
+    return `${baseName}-${cleanPath}${ext}`;
 };
 
 /**
@@ -44,7 +47,7 @@ const downloadResource = async (resourceUrl, outputDir, baseHost) => {
         if (abs.hostname !== baseHost) return null;
 
         const { data } = await axios.get(abs.href, { responseType: 'arraybuffer' });
-        const filename = buildResourceName(abs.href, baseHost);
+        const filename = buildResourceName(abs.href, `https://${baseHost}`);
         const filePath = path.join(outputDir, filename);
         await fs.writeFile(filePath, data);
         return filename;
