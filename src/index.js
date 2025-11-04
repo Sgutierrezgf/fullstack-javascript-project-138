@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import axios from 'axios';
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio'; // ✅ cambio aquí
 
 const pageLoader = async (url, outputDir = process.cwd()) => {
     const { hostname, pathname } = new URL(url);
@@ -13,14 +13,11 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     const htmlFilePath = path.join(outputDir, htmlFileName);
     const htmlFilePathInside = path.join(resourceDirPath, htmlFileName);
 
-    // crear carpeta de recursos
     await fs.mkdir(resourceDirPath, { recursive: true });
 
-    // descargar página
     const response = await axios.get(url);
     const $ = cheerio.load(response.data);
 
-    // descargar recursos locales (img, link, script)
     const resources = [];
     $('img, link[href], script[src]').each((_, element) => {
         const tag = $(element);
@@ -33,12 +30,10 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
         }
     });
 
-    // guardar HTML modificado
     const updatedHtml = $.html();
     await fs.writeFile(htmlFilePath, updatedHtml, 'utf-8');
-    await fs.writeFile(htmlFilePathInside, updatedHtml, 'utf-8'); // 💡 duplicado en _files
+    await fs.writeFile(htmlFilePathInside, updatedHtml, 'utf-8');
 
-    // descargar recursos
     await Promise.all(resources.map(async ({ resourceUrl, filePath }) => {
         const res = await axios.get(resourceUrl, { responseType: 'arraybuffer' });
         await fs.writeFile(filePath, res.data);
