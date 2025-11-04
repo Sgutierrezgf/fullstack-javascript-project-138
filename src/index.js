@@ -2,16 +2,11 @@ import fs from 'fs/promises';
 import path from 'path';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const pageLoader = async (url, outputDir = process.cwd()) => {
     console.log(`[page-loader] start: ${url} -> ${outputDir}`);
 
-    // Verificar que exista el directorio de salida
+    // Verificar que el directorio de salida exista
     try {
         await fs.access(outputDir);
     } catch {
@@ -25,9 +20,12 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     const resourceDirName = `${fileBaseName}_files`;
     const resourceDirPath = path.join(outputDir, resourceDirName);
     const htmlFilePath = path.join(outputDir, htmlFileName);
+    const htmlFilePathInside = path.join(resourceDirPath, htmlFileName);
 
+    // Crear carpeta para recursos
     await fs.mkdir(resourceDirPath, { recursive: true });
 
+    // Descargar HTML principal
     let response;
     try {
         response = await axios.get(url);
@@ -38,7 +36,7 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     const $ = cheerio.load(response.data);
     const resources = [];
 
-    // Recorremos img, link[href] y script[src]
+    // Extraer recursos y aplanar nombres dentro de la carpeta _files
     $('img[src], link[href], script[src]').each((_, element) => {
         const tag = $(element);
         const attr = tag.attr('src') || tag.attr('href');
@@ -47,22 +45,22 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
 
         const resourceUrl = new URL(attr, url);
 
-        // Descargar solo si es del mismo host
-        if (resourceUrl.origin === new URL(url).origin) {
-            const cleanName = `${hostname}${resourceUrl.pathname}`.replace(/[^a-z0-9]/gi, '-');
-            const resourcePath = path.join(resourceDirPath, cleanName);
+        // Solo recursos del mismo host
+        if (resourceUrl.hostname === hostname) {
+            const resourceFileName = `${fileBaseName}${resourceUrl.pathname}`.replace(/[^a-z0-9]/gi, '-');
+            const resourcePath = path.join(resourceDirPath, resourceFileName);
 
-            // Crear subcarpetas necesarias
-            fs.mkdir(path.dirname(resourcePath), { recursive: true }).catch(() => { });
-
+            // Actualizar HTML para apuntar a la ruta relativa
             tag.attr(tag.is('link') ? 'href' : 'src', path.relative(outputDir, resourcePath));
 
             resources.push({ resourceUrl: resourceUrl.href, filePath: resourcePath });
         }
     });
 
+    // Guardar HTML principal
     const updatedHtml = $.html();
     await fs.writeFile(htmlFilePath, updatedHtml, 'utf-8');
+    await fs.writeFile(htmlFilePathInside, updatedHtml, 'utf-8');
 
     // Descargar recursos
     for (const { resourceUrl, filePath } of resources) {
