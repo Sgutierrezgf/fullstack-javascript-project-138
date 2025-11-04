@@ -84,11 +84,17 @@ const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
         const res = await tryGet(abs.href);
         const data = res.data;
 
-        const filename = buildResourceName(abs.href, baseUrl);
+        let filename = buildResourceName(abs.href, baseUrl);
+
+        // 🩵 Nuevo: si no tiene extensión (ej. /blog), forzamos .html
+        if (!path.extname(filename)) {
+            filename += '.html';
+        }
+
         const filePath = path.join(outputDir, filename);
         await fs.writeFile(filePath, Buffer.from(data));
-        console.log(`[page-loader] saved: ${filePath}`);
 
+        console.log(`[page-loader] saved: ${filePath}`);
         return filename;
     } catch (err) {
         console.error(`[page-loader] error downloading ${resourceUrl}:`, err.message);
