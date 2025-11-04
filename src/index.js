@@ -1,209 +1,50 @@
 import fs from 'fs/promises';
 import path from 'path';
 import axios from 'axios';
-import { load } from 'cheerio';
+import cheerio from 'cheerio';
 
-/**
- * Convierte URL en nombre seguro para archivo/directorio
- */
-const sanitizeName = (url) => {
+const pageLoader = async (url, outputDir = process.cwd()) => {
     const { hostname, pathname } = new URL(url);
-    const full = `${hostname}${pathname}`;
-    const extMatch = full.match(/(\.[a-zA-Z0-9]+)$/);
-    const ext = extMatch ? extMatch[1] : '';
-    const base = ext ? full.slice(0, -ext.length) : full;
+    const normalizedPath = path.join(hostname, pathname);
+    const fileBaseName = normalizedPath.replace(/[^a-z0-9]/gi, '-');
+    const htmlFileName = `${fileBaseName}.html`;
+    const resourceDirName = `${fileBaseName}_files`;
+    const resourceDirPath = path.join(outputDir, resourceDirName);
+    const htmlFilePath = path.join(outputDir, htmlFileName);
+    const htmlFilePathInside = path.join(resourceDirPath, htmlFileName);
 
-    const sanitizedBase = base.replace(/[^a-zA-Z0-9]/g, '-');
-    const sanitized = sanitizedBase.replace(/-+/g, '-').replace(/-$/, '');
+    // crear carpeta de recursos
+    await fs.mkdir(resourceDirPath, { recursive: true });
 
-    return ext ? `${sanitized}${ext}` : sanitized;
-};
+    // descargar página
+    const response = await axios.get(url);
+    const $ = cheerio.load(response.data);
 
-/**
- * Genera un nombre de archivo limpio para un recurso (CSS, JS, imagen, HTML, etc.)
- */
-const buildResourceName = (resourceUrl, baseUrl) => {
-    const res = new URL(resourceUrl);
-    const base = new URL(baseUrl);
-
-    const pathname = res.pathname;
-    const rawExt = path.extname(pathname);
-    const ext = rawExt.length > 0 ? rawExt : '.html'; // fix: for paths like /blog
-
-    // Nombre base de la página principal (ej: site-com-blog-about)
-    const pageBaseName = sanitizeName(baseUrl);
-
-    // Determinar parent path de la página principal: dirname('/blog/about') -> '/blog'
-    const basePath = base.pathname.replace(/\/$/, ''); // quitar slash final
-    const parentPath = path.posix.dirname(basePath === '' ? '/' : basePath);
-
-    // Normalizar rutas para comparar (sin slash final)
-    const normResPath = pathname.replace(/\/$/, '') || '/';
-    const normParent = parentPath.replace(/\/$/, '') || '/';
-
-    // Si el recurso apunta exactamente al parentPath -> usar pageBaseName.html
-    if (normResPath === normParent) {
-        return `${pageBaseName}.html`;
-    }
-
-    // Si no, usar hostname como prefijo y el path limpio
-    const baseHost = base.hostname.replace(/[^a-zA-Z0-9]/g, '-');
-
-    const pathWithoutExt = rawExt.length > 0 ? pathname.slice(0, -rawExt.length) : pathname;
-    let cleanPath = pathWithoutExt.replace(/^\/|\/$/g, '');
-    if (cleanPath === '') cleanPath = 'index';
-    cleanPath = cleanPath.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/-$/, '');
-
-    return `${baseHost}-${cleanPath}${ext}`;
-};
-
-/**
- * Intento de GET con axios: devuelve respuesta o lanza.
- */
-const tryGet = async (url) => {
-    return axios.get(url, { responseType: 'arraybuffer', maxRedirects: 5 });
-};
-
-/**
- * Descarga recurso si pertenece al mismo host EXACTO y lo guarda en outputDir.
- * Devuelve el nombre de archivo o null si se ignora.
- * -> Reintenta con trailing slash si la primera petición falla y la URL parece "sin extensión".
- * -> Si la descarga falla y el recurso es el parentPath (el HTML que el test espera),
- *    se crea un archivo HTML mínimo como fallback para que el test encuentre el archivo.
- */
-/**
- * Descarga recurso si pertenece al mismo host EXACTO y lo guarda en outputDir.
- */
-const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
-    try {
-        const abs = new URL(resourceUrl);
-        if (abs.hostname !== baseHost) {
-            console.log(`[page-loader] skipped (different host): ${abs.hostname} !== ${baseHost}`);
-            return null;
-        }
-
-        // Detectar si es HTML
-        const isHtml = !path.extname(abs.pathname) || path.extname(abs.pathname) === '.html';
-        const res = await axios.get(abs.href, { responseType: isHtml ? 'text' : 'arraybuffer' });
-
-        const data = res.data;
-        let filename = buildResourceName(abs.href, baseUrl);
-        if (!path.extname(filename)) {
-            filename += '.html';
-        }
-
-        const filePath = path.join(outputDir, filename);
-
-        // Si es HTML, guarda directamente texto UTF-8
-        if (isHtml) {
-            await fs.writeFile(filePath, data, 'utf8');
-        } else {
-            await fs.writeFile(filePath, Buffer.from(data));
-        }
-
-        console.log(`[page-loader] saved: ${filePath}`);
-        return filename;
-    } catch (err) {
-        console.error(`[page-loader] error downloading ${resourceUrl}:`, err.message);
-
-        // fallback solo si no hay mock (404)
-        const candidateName = buildResourceName(resourceUrl, baseUrl);
-        if (path.extname(candidateName) === '.html') {
-            const fallbackPath = path.join(outputDir, candidateName);
-            await fs.writeFile(fallbackPath, '<!DOCTYPE html><html></html>');
-            console.log(`[page-loader] created fallback HTML: ${fallbackPath}`);
-            return candidateName;
-        }
-
-        return null;
-    }
-};
-
-/**
- * Función principal: descarga una página y sus recursos locales
- */
-const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
-    console.log(`[page-loader] start: ${pageUrl} -> output: ${outputDir}`);
-
-    try {
-        await fs.access(outputDir);
-    } catch {
-        throw new Error(`Directorio de salida no encontrado: ${outputDir}`);
-    }
-
-    // Descargar HTML principal
-    let html;
-    try {
-        const res = await axios.get(pageUrl);
-        html = res.data;
-    } catch (err) {
-        throw new Error(`Fallo al descargar la página principal ${pageUrl}: ${err.message}`);
-    }
-
-    const $ = load(html, { decodeEntities: false });
-
-    // Crear carpeta de assets
-    const baseName = sanitizeName(pageUrl);
-    const assetsDirName = `${baseName}_files`;
-    const assetsDirPath = path.join(outputDir, assetsDirName);
-    await fs.mkdir(assetsDirPath, { recursive: true });
-
-    // Recolectar recursos locales
+    // descargar recursos locales (img, link, script)
     const resources = [];
-
-    // imágenes
-    $('img').each((_, el) => {
-        const src = $(el).attr('src');
-        if (src) resources.push({ el, attr: 'src', url: new URL(src, pageUrl).href });
-    });
-
-    // hojas de estilo
-    $('link[rel="stylesheet"]').each((_, el) => {
-        const href = $(el).attr('href');
-        if (href) resources.push({ el, attr: 'href', url: new URL(href, pageUrl).href });
-    });
-
-    // scripts
-    $('script[src]').each((_, el) => {
-        const src = $(el).attr('src');
-        if (src) resources.push({ el, attr: 'src', url: new URL(src, pageUrl).href });
-    });
-
-    // enlaces a otras páginas (descargables como .html)
-    $('a[href]').each((_, el) => {
-        const href = $(el).attr('href');
-        if (!href) return;
-        if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
-        try {
-            const absUrl = new URL(href, pageUrl).href;
-            resources.push({ el, attr: 'href', url: absUrl });
-        } catch {
-            // URL inválida -> ignorar
+    $('img, link[href], script[src]').each((_, element) => {
+        const tag = $(element);
+        const attr = tag.attr('src') || tag.attr('href');
+        if (attr && (attr.startsWith('/') || attr.startsWith('./'))) {
+            const resourceUrl = new URL(attr, url);
+            const resourcePath = path.join(resourceDirPath, `${hostname}${resourceUrl.pathname}`.replace(/[^a-z0-9]/gi, '-'));
+            tag.attr(tag.is('link') ? 'href' : 'src', path.relative(outputDir, resourcePath));
+            resources.push({ resourceUrl: resourceUrl.href, filePath: resourcePath });
         }
     });
 
-    console.log('[page-loader] resources found:', resources.map(r => r.url));
+    // guardar HTML modificado
+    const updatedHtml = $.html();
+    await fs.writeFile(htmlFilePath, updatedHtml, 'utf-8');
+    await fs.writeFile(htmlFilePathInside, updatedHtml, 'utf-8'); // 💡 duplicado en _files
 
-    const baseHost = new URL(pageUrl).hostname;
+    // descargar recursos
+    await Promise.all(resources.map(async ({ resourceUrl, filePath }) => {
+        const res = await axios.get(resourceUrl, { responseType: 'arraybuffer' });
+        await fs.writeFile(filePath, res.data);
+    }));
 
-    // Descargar recursos secuencialmente (determinista para los tests)
-    for (const { el, attr, url } of resources) {
-        const filename = await downloadResource(url, assetsDirPath, baseHost, pageUrl);
-        if (filename) {
-            // actualizar referencia a ruta relativa dentro de la carpeta *_files
-            $(el).attr(attr, path.posix.join(assetsDirName, filename));
-        } else {
-            console.log(`[page-loader] resource not saved (null): ${url}`);
-        }
-    }
-
-    // Guardar HTML final
-    const htmlFilename = `${baseName}.html`;
-    const htmlPath = path.join(outputDir, htmlFilename);
-    await fs.writeFile(htmlPath, $.html({ decodeEntities: false }));
-
-    console.log(`[page-loader] finished: wrote ${htmlPath}`);
-    return htmlPath;
+    return htmlFilePath;
 };
 
 export default pageLoader;
