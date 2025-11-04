@@ -81,65 +81,20 @@ const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
             return null;
         }
 
-        // Primer intento
-        try {
-            const res = await tryGet(abs.href);
-            const data = res.data;
-            const filename = buildResourceName(abs.href, baseUrl);
-            const filePath = path.join(outputDir, filename);
-            await fs.writeFile(filePath, Buffer.from(data));
-            console.log(`[page-loader] saved: ${filePath}`);
-            return filename;
-        } catch (firstErr) {
-            // Si la ruta no tiene extensión y no termina en '/', intentar con '/'
-            const pathname = abs.pathname;
-            const ext = path.extname(pathname);
-            if (!ext && !pathname.endsWith('/')) {
-                const altHref = `${abs.origin}${pathname}/`;
-                console.log(`[page-loader] first download failed — retrying with trailing slash: ${altHref}`);
-                try {
-                    const res2 = await tryGet(altHref);
-                    const data2 = res2.data;
-                    const filename = buildResourceName(abs.href, baseUrl);
-                    const filePath = path.join(outputDir, filename);
-                    await fs.writeFile(filePath, Buffer.from(data2));
-                    console.log(`[page-loader] saved (after retry): ${filePath}`);
-                    return filename;
-                } catch (secondErr) {
-                    console.error(`[page-loader] retry failed for ${altHref}:`, secondErr?.message || secondErr);
+        const res = await tryGet(abs.href);
+        const data = res.data;
 
-                    // --- FALLBACK: si el recurso corresponde al parentPath (p.ej. '/blog' desde '/blog/about'),
-                    // crear un archivo HTML mínimo dentro de la carpeta de assets con el nombre esperado.
-                    const fallbackName = buildResourceName(abs.href, baseUrl);
-                    // decidir si es el caso de parentPath comparando si fallbackName === sanitizeName(baseUrl) + '.html'
-                    const expectedPageBase = `${sanitizeName(baseUrl)}.html`;
-                    if (fallbackName === expectedPageBase) {
-                        const fallbackPath = path.join(outputDir, fallbackName);
-                        const minimalHtml = '<!doctype html><html><head><meta charset="utf-8"><title></title></head><body></body></html>';
-                        try {
-                            await fs.writeFile(fallbackPath, minimalHtml);
-                            console.log(`[page-loader] fallback created: ${fallbackPath}`);
-                            return fallbackName;
-                        } catch (writeErr) {
-                            console.error(`[page-loader] failed to create fallback file ${fallbackPath}:`, writeErr?.message || writeErr);
-                            return null;
-                        }
-                    }
+        const filename = buildResourceName(abs.href, baseUrl);
+        const filePath = path.join(outputDir, filename);
+        await fs.writeFile(filePath, Buffer.from(data));
+        console.log(`[page-loader] saved: ${filePath}`);
 
-                    return null;
-                }
-            }
-
-            // si no aplicó el caso de retry, logueamos y devolver null
-            console.error(`[page-loader] error downloading ${resourceUrl}:`, firstErr?.message || firstErr);
-            return null;
-        }
+        return filename;
     } catch (err) {
-        console.error(`[page-loader] error (bad URL?) ${resourceUrl}:`, err?.message || err);
+        console.error(`[page-loader] error downloading ${resourceUrl}:`, err.message);
         return null;
     }
 };
-
 /**
  * Función principal: descarga una página y sus recursos locales
  */
