@@ -31,7 +31,8 @@ const buildResourceName = (resourceUrl, baseUrl) => {
     const base = new URL(baseUrl);
 
     const pathname = res.pathname;
-    const ext = path.extname(pathname) || '.html';
+    const rawExt = path.extname(pathname);
+    const ext = rawExt.length > 0 ? rawExt : '.html'; // ✅ fix clave
 
     // Nombre base de la página principal (ej: site-com-blog-about)
     const pageBaseName = sanitizeName(baseUrl);
@@ -52,7 +53,7 @@ const buildResourceName = (resourceUrl, baseUrl) => {
     // Si no, usar hostname como prefijo y el path limpio
     const baseHost = base.hostname.replace(/[^a-zA-Z0-9]/g, '-');
 
-    const pathWithoutExt = ext ? pathname.slice(0, -ext.length) : pathname;
+    const pathWithoutExt = rawExt.length > 0 ? pathname.slice(0, -rawExt.length) : pathname;
     let cleanPath = pathWithoutExt.replace(/^\/|\/$/g, '');
     if (cleanPath === '') cleanPath = 'index';
     cleanPath = cleanPath.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/-$/, '');
