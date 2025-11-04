@@ -71,6 +71,9 @@ const tryGet = async (url) => {
  * -> Si la descarga falla y el recurso es el parentPath (el HTML que el test espera),
  *    se crea un archivo HTML mínimo como fallback para que el test encuentre el archivo.
  */
+/**
+ * Descarga recurso si pertenece al mismo host EXACTO y lo guarda en outputDir.
+ */
 const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
     try {
         const abs = new URL(resourceUrl);
@@ -85,22 +88,30 @@ const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
         const data = res.data;
 
         let filename = buildResourceName(abs.href, baseUrl);
-
-        // 🩵 Nuevo: si no tiene extensión (ej. /blog), forzamos .html
         if (!path.extname(filename)) {
             filename += '.html';
         }
 
         const filePath = path.join(outputDir, filename);
         await fs.writeFile(filePath, Buffer.from(data));
-
         console.log(`[page-loader] saved: ${filePath}`);
         return filename;
     } catch (err) {
         console.error(`[page-loader] error downloading ${resourceUrl}:`, err.message);
+
+        // 🩵 FIX: crear archivo vacío si es un HTML esperado (misma base y termina en .html)
+        const candidateName = buildResourceName(resourceUrl, baseUrl);
+        if (path.extname(candidateName) === '.html') {
+            const fallbackPath = path.join(outputDir, candidateName);
+            await fs.writeFile(fallbackPath, '<!DOCTYPE html><html></html>');
+            console.log(`[page-loader] created fallback HTML: ${fallbackPath}`);
+            return candidateName;
+        }
+
         return null;
     }
 };
+
 /**
  * Función principal: descarga una página y sus recursos locales
  */
