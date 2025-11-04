@@ -20,14 +20,14 @@ const sanitizeName = (url) => {
 };
 
 /**
- * Genera un nombre de archivo limpio para un recurso (CSS, JS, imagen, etc.)
+ * Genera un nombre de archivo limpio para un recurso (CSS, JS, imagen, HTML, etc.)
  * usando solo el hostname del sitio base como prefijo.
  */
 const buildResourceName = (resourceUrl, baseUrl) => {
     const { pathname } = new URL(resourceUrl);
     const ext = path.extname(pathname) || '.html';
 
-    // ✅ Solo el hostname como prefijo, no toda la ruta
+    // Solo hostname como prefijo (ej: site.com -> site-com)
     const baseHost = new URL(baseUrl).hostname;
     const baseName = baseHost.replace(/[^a-zA-Z0-9]/g, '-');
 
@@ -99,19 +99,37 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
 
     // Recolectar recursos locales
     const resources = [];
+
+    // imágenes
     $('img').each((_, el) => {
         const src = $(el).attr('src');
         if (src) resources.push({ el, attr: 'src', url: new URL(src, pageUrl).href });
     });
 
+    // hojas de estilo
     $('link[rel="stylesheet"]').each((_, el) => {
         const href = $(el).attr('href');
         if (href) resources.push({ el, attr: 'href', url: new URL(href, pageUrl).href });
     });
 
+    // scripts
     $('script[src]').each((_, el) => {
         const src = $(el).attr('src');
         if (src) resources.push({ el, attr: 'src', url: new URL(src, pageUrl).href });
+    });
+
+    // enlaces a otras páginas (descargables como .html)
+    $('a[href]').each((_, el) => {
+        const href = $(el).attr('href');
+        if (!href) return;
+        // Ignorar anchors y esquemas que no sean http(s)
+        if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+        try {
+            const absUrl = new URL(href, pageUrl).href;
+            resources.push({ el, attr: 'href', url: absUrl });
+        } catch {
+            // URL inválida -> ignorar
+        }
     });
 
     console.log('[page-loader] resources found:', resources.map(r => r.url));
@@ -122,6 +140,7 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
     for (const { el, attr, url } of resources) {
         const filename = await downloadResource(url, assetsDirPath, baseHost, pageUrl);
         if (filename) {
+            // actualizar referencia a ruta relativa dentro de la carpeta *_files
             $(el).attr(attr, path.posix.join(assetsDirName, filename));
         } else {
             console.log(`[page-loader] resource not saved (null): ${url}`);
