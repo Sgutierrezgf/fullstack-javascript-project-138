@@ -25,13 +25,22 @@ const sanitizeName = (url) => {
  */
 const buildResourceName = (resourceUrl, baseUrl) => {
     const { pathname } = new URL(resourceUrl);
+
+    // obtener extensión (ej: .css, .js, .png). Si no hay ext, usar .html
     const ext = path.extname(pathname) || '.html';
+
+    // Nombre base de la página principal (ej: site-com-blog-about)
     const baseName = sanitizeName(baseUrl);
 
-    // Limpia el path del recurso (por ejemplo "assets/styles.css" → "assets-styles.css")
-    const cleanPath = pathname.replace(/^\/|\/$/g, '').replace(/[^a-zA-Z0-9]/g, '-');
+    // Quitar la extensión del pathname para limpiar el path correctamente
+    const pathWithoutExt = ext ? pathname.slice(0, -ext.length) : pathname;
 
-    // Combina el nombre base de la página con el path del recurso
+    // Normalizar path: eliminar slashes iniciales/finales, convertir "/" a "-", eliminar caracteres inválidos
+    let cleanPath = pathWithoutExt.replace(/^\/|\/$/g, '');
+    // si el recurso era la raíz, usar 'index'
+    if (cleanPath === '') cleanPath = 'index';
+    cleanPath = cleanPath.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/-$/, '');
+
     return `${baseName}-${cleanPath}${ext}`;
 };
 
@@ -103,7 +112,9 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
     for (const { el, attr, url } of resources) {
         const filename = await downloadResource(url, assetsDirPath, baseHost, pageUrl);
         if (filename) {
-            $(el).attr(attr, path.join(assetsDirName, filename));
+            // actualizar referencia a ruta relativa dentro de la carpeta *_files
+            // usar path.posix.join para asegurar '/' (aunque en Linux path.join también usa '/')
+            $(el).attr(attr, path.posix.join(assetsDirName, filename));
         }
     }
 
