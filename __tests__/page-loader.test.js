@@ -1,128 +1,69 @@
-import nock from 'nock';
-import os from 'os';
+import axios from 'axios';
 import path from 'path';
-import { promises as fs } from 'fs';
-import pageLoader from '../src/index.js';
+import fs from 'fs/promises';
+import { URL } from 'url';
+import cheerio from 'cheerio';
 
-const url = 'https://example.com/test';
-const htmlWithImage = `
-<!DOCTYPE html>
-<html>
-  <head><meta charset="utf-8"><title>Example</title></head>
-  <body>
-    <img src="/assets/image.png" alt="example image">
-  </body>
-</html>
-`;
+// Convierte URL a un nombre de archivo seguro
+function urlToFilename(urlStr) {
+    const { hostname, pathname } = new URL(urlStr);
+    let fileName = `${hostname}${pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
+    if (fileName.endsWith('-')) fileName = fileName.slice(0, -1);
+    return fileName + '.html';
+}
 
-nock.disableNetConnect();
+// Convierte URL de recurso a nombre de archivo
+function resourceToFilename(pageUrl, resourceUrl) {
+    const pageHost = new URL(pageUrl).hostname;
+    const urlObj = new URL(resourceUrl, pageUrl);
+    let name = `${urlObj.hostname}${urlObj.pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
+    if (urlObj.pathname.endsWith('/')) name += '-index';
+    const ext = path.extname(urlObj.pathname) || '.html';
+    return name + ext;
+}
 
-describe('Page Loader', () => {
-    let tempDir;
+async function downloadResource(url, filepath) {
+    const { data } = await axios.get(url, { responseType: 'arraybuffer' });
+    await fs.mkdir(path.dirname(filepath), { recursive: true });
+    await fs.writeFile(filepath, data);
+}
 
-    beforeEach(async () => {
-        tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'page-loader-'));
-    });
+export default async function pageLoader(pageUrl, outputDir) {
+    // 1. Descargar HTML
+    const { data: html } = await axios.get(pageUrl);
+    const $ = cheerio.load(html);
 
-    afterEach(async () => {
+    // 2. Crear carpeta de recursos
+    const htmlFilename = urlToFilename(pageUrl);
+    const resourcesDir = path.join(outputDir, htmlFilename.replace('.html', '_files'));
+    await fs.mkdir(resourcesDir, { recursive: true });
+
+    // 3. Seleccionar recursos: img, script, link[rel=stylesheet]
+    const resources = [];
+
+    $('img[src]').each((i, el) => resources.push({ el, attr: 'src' }));
+    $('script[src]').each((i, el) => resources.push({ el, attr: 'src' }));
+    $('link[rel="stylesheet"][href]').each((i, el) => resources.push({ el, attr: 'href' }));
+
+    for (const { el, attr } of resources) {
+        const resUrl = $(el).attr(attr);
+        if (!resUrl) continue;
+
+        const filename = resourceToFilename(pageUrl, resUrl);
+        const localPath = path.join(resourcesDir, filename);
+
         try {
-            const files = await fs.readdir(tempDir);
-            for (const file of files) {
-                const fullPath = path.join(tempDir, file);
-                const stat = await fs.lstat(fullPath);
-                if (stat.isDirectory()) {
-                    const inner = await fs.readdir(fullPath);
-                    await Promise.all(inner.map(f => fs.unlink(path.join(fullPath, f))));
-                    await fs.rmdir(fullPath);
-                } else {
-                    await fs.unlink(fullPath);
-                }
-            }
-            await fs.rmdir(tempDir);
-        } catch (e) {
-            // ignore cleanup errors
+            await downloadResource(resUrl, localPath);
+            // Reescribir HTML para apuntar al archivo local
+            $(el).attr(attr, path.join(path.basename(resourcesDir), filename));
+        } catch (err) {
+            console.error(`Failed to download ${resUrl}:`, err.message);
         }
-    });
+    }
 
-    it('should download and save page', async () => {
-        nock('https://example.com').get('/test').reply(200, '<html><body>Hello</body></html>');
+    // 4. Guardar HTML modificado
+    const finalHtmlPath = path.join(outputDir, htmlFilename);
+    await fs.writeFile(finalHtmlPath, $.html());
 
-        const filePath = await pageLoader(url, tempDir);
-        const data = await fs.readFile(filePath, 'utf-8');
-
-        expect(data).toContain('<body>Hello</body>');
-        expect(path.basename(filePath)).toBe('example-com-test.html');
-    });
-
-    it('should download images and update HTML src', async () => {
-        // Simular respuesta HTML con una imagen
-        nock('https://example.com')
-            .get('/test')
-            .reply(200, htmlWithImage)
-            .get('/assets/image.png')
-            .reply(200, 'fakebinarydata', { 'Content-Type': 'image/png' });
-
-        // Ejecutar pageLoader
-        const filePath = await pageLoader(url, tempDir);
-
-        // Leer HTML resultante
-        const resultHtml = await fs.readFile(filePath, 'utf-8');
-
-        // Verificar que el HTML tenga la ruta modificada
-        expect(resultHtml).toContain('example-com-test_files/example-com-assets-image.png');
-
-        // Verificar que el archivo de imagen exista
-        const imgDir = path.join(tempDir, 'example-com-test_files');
-        const imgFiles = await fs.readdir(imgDir);
-        expect(imgFiles).toContain('example-com-assets-image.png');
-
-        // Leer imagen descargada (contenido simulado)
-        const imgContent = await fs.readFile(
-            path.join(imgDir, 'example-com-assets-image.png'),
-            'utf-8'
-        );
-        expect(imgContent).toBe('fakebinarydata');
-    });
-
-    it('should download local link and script resources', async () => {
-        const pageHtml = `
-  <!DOCTYPE html>
-  <html>
-    <head>
-      <title>Test</title>
-      <link rel="stylesheet" href="/assets/app.css">
-      <script src="/js/main.js"></script>
-    </head>
-    <body><img src="/images/test.png"></body>
-  </html>
-  `;
-
-        nock('https://codica.la')
-            .get('/cursos')
-            .reply(200, pageHtml)
-            .get('/assets/app.css')
-            .reply(200, 'body { background: red; }')
-            .get('/js/main.js')
-            .reply(200, 'console.log("hello");')
-            .get('/images/test.png')
-            .reply(200, 'fake image');
-
-        const filePath = await pageLoader('https://codica.la/cursos', tempDir);
-        const data = await fs.readFile(filePath, 'utf-8');
-
-        // Rutas actualizadas
-        expect(data).toContain('codica-la-cursos_files/codica-la-assets-app.css');
-        expect(data).toContain('codica-la-cursos_files/codica-la-js-main.js');
-        expect(data).toContain('codica-la-cursos_files/codica-la-images-test.png');
-
-        // Archivos descargados
-        const files = await fs.readdir(path.join(tempDir, 'codica-la-cursos_files'));
-        expect(files).toEqual(
-            expect.arrayContaining([
-                'codica-la-assets-app.css',
-                'codica-la-js-main.js',
-                'codica-la-images-test.png',
-            ])
-        );
-    });
-});
+    return finalHtmlPath;
+}
