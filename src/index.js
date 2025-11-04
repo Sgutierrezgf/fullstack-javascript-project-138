@@ -32,7 +32,7 @@ const buildResourceName = (resourceUrl, baseUrl) => {
 
     const pathname = res.pathname;
     const rawExt = path.extname(pathname);
-    const ext = rawExt.length > 0 ? rawExt : '.html'; // ✅ fix clave
+    const ext = rawExt.length > 0 ? rawExt : '.html'; // fix: for paths like /blog
 
     // Nombre base de la página principal (ej: site-com-blog-about)
     const pageBaseName = sanitizeName(baseUrl);
@@ -62,12 +62,21 @@ const buildResourceName = (resourceUrl, baseUrl) => {
 };
 
 /**
+ * Intento de GET con axios: devuelve respuesta o lanza.
+ * Separamos en función para poder reintentar con slash fácilmente.
+ */
+const tryGet = async (url) => {
+    return axios.get(url, { responseType: 'arraybuffer', maxRedirects: 5 });
+};
+
+/**
  * Descarga recurso si pertenece al mismo host EXACTO y lo guarda en outputDir.
  * Devuelve el nombre de archivo o null si se ignora.
+ * -> Reintenta con trailing slash si la primera petición falla y la URL parece "sin extensión".
  */
 const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
     try {
-        const abs = new URL(resourceUrl);
+        let abs = new URL(resourceUrl);
         console.log(`[page-loader] trying resource: ${resourceUrl} -> hostname: ${abs.hostname}`);
 
         if (abs.hostname !== baseHost) {
@@ -75,17 +84,44 @@ const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
             return null;
         }
 
-        const res = await axios.get(abs.href, { responseType: 'arraybuffer', maxRedirects: 5 });
-        const data = res.data;
+        // Primer intento
+        try {
+            const res = await tryGet(abs.href);
+            const data = res.data;
+            const filename = buildResourceName(abs.href, baseUrl);
+            const filePath = path.join(outputDir, filename);
+            await fs.writeFile(filePath, Buffer.from(data));
+            console.log(`[page-loader] saved: ${filePath}`);
+            return filename;
+        } catch (firstErr) {
+            // Si la ruta no tiene extensión y no termina en '/', intentar con '/'
+            const pathname = abs.pathname;
+            const ext = path.extname(pathname);
+            if (!ext && !pathname.endsWith('/')) {
+                const altHref = `${abs.origin}${pathname}/`;
+                console.log(`[page-loader] first download failed — retrying with trailing slash: ${altHref}`);
+                try {
+                    const res2 = await tryGet(altHref);
+                    const data2 = res2.data;
+                    // buildResourceName usa baseUrl para decidir nombre; no importa si pedimos con slash
+                    const filename = buildResourceName(abs.href, baseUrl);
+                    const filePath = path.join(outputDir, filename);
+                    await fs.writeFile(filePath, Buffer.from(data2));
+                    console.log(`[page-loader] saved (after retry): ${filePath}`);
+                    return filename;
+                } catch (secondErr) {
+                    // fallthrough: vamos a loguear y devolver null
+                    console.error(`[page-loader] retry failed for ${altHref}:`, secondErr?.message || secondErr);
+                    return null;
+                }
+            }
 
-        const filename = buildResourceName(abs.href, baseUrl);
-        const filePath = path.join(outputDir, filename);
-        await fs.writeFile(filePath, Buffer.from(data));
-
-        console.log(`[page-loader] saved: ${filePath}`);
-        return filename;
+            // si no aplicó el caso de retry, logueamos el error original
+            console.error(`[page-loader] error downloading ${resourceUrl}:`, firstErr?.message || firstErr);
+            return null;
+        }
     } catch (err) {
-        console.error(`[page-loader] error downloading ${resourceUrl}:`, err?.message || err);
+        console.error(`[page-loader] error (bad URL?) ${resourceUrl}:`, err?.message || err);
         return null;
     }
 };
