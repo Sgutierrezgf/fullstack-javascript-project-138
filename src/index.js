@@ -21,23 +21,18 @@ const sanitizeName = (url) => {
 
 /**
  * Genera un nombre de archivo limpio para un recurso (CSS, JS, imagen, etc.)
- * usando el nombre base de la página principal como prefijo.
+ * usando solo el hostname del sitio base como prefijo.
  */
 const buildResourceName = (resourceUrl, baseUrl) => {
     const { pathname } = new URL(resourceUrl);
-
-    // obtener extensión (ej: .css, .js, .png). Si no hay ext, usar .html
     const ext = path.extname(pathname) || '.html';
 
-    // Nombre base de la página principal (ej: site-com-blog-about)
-    const baseName = sanitizeName(baseUrl);
+    // ✅ Solo el hostname como prefijo, no toda la ruta
+    const baseHost = new URL(baseUrl).hostname;
+    const baseName = baseHost.replace(/[^a-zA-Z0-9]/g, '-');
 
-    // Quitar la extensión del pathname para limpiar el path correctamente
     const pathWithoutExt = ext ? pathname.slice(0, -ext.length) : pathname;
-
-    // Normalizar path: eliminar slashes iniciales/finales, convertir "/" a "-", eliminar caracteres inválidos
     let cleanPath = pathWithoutExt.replace(/^\/|\/$/g, '');
-    // si el recurso era la raíz, usar 'index'
     if (cleanPath === '') cleanPath = 'index';
     cleanPath = cleanPath.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/-$/, '');
 
@@ -51,27 +46,41 @@ const buildResourceName = (resourceUrl, baseUrl) => {
 const downloadResource = async (resourceUrl, outputDir, baseHost, baseUrl) => {
     try {
         const abs = new URL(resourceUrl);
-        if (abs.hostname !== baseHost) return null;
+        console.log(`[page-loader] trying resource: ${resourceUrl} -> hostname: ${abs.hostname}`);
 
-        const { data } = await axios.get(abs.href, { responseType: 'arraybuffer' });
+        if (abs.hostname !== baseHost) {
+            console.log(`[page-loader] skipped (different host): ${abs.hostname} !== ${baseHost}`);
+            return null;
+        }
+
+        const res = await axios.get(abs.href, { responseType: 'arraybuffer', maxRedirects: 5 });
+        const data = res.data;
+
         const filename = buildResourceName(abs.href, baseUrl);
         const filePath = path.join(outputDir, filename);
-        await fs.writeFile(filePath, data);
+        await fs.writeFile(filePath, Buffer.from(data));
+
+        console.log(`[page-loader] saved: ${filePath}`);
         return filename;
-    } catch {
+    } catch (err) {
+        console.error(`[page-loader] error downloading ${resourceUrl}:`, err?.message || err);
         return null;
     }
 };
 
+/**
+ * Función principal: descarga una página y sus recursos locales
+ */
 const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
-    // validar directorio de salida
+    console.log(`[page-loader] start: ${pageUrl} -> output: ${outputDir}`);
+
     try {
         await fs.access(outputDir);
     } catch {
         throw new Error(`Directorio de salida no encontrado: ${outputDir}`);
     }
 
-    // descargar HTML principal
+    // Descargar HTML principal
     let html;
     try {
         const res = await axios.get(pageUrl);
@@ -82,15 +91,14 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
 
     const $ = load(html, { decodeEntities: false });
 
-    // preparar carpeta de assets
+    // Crear carpeta de assets
     const baseName = sanitizeName(pageUrl);
     const assetsDirName = `${baseName}_files`;
     const assetsDirPath = path.join(outputDir, assetsDirName);
     await fs.mkdir(assetsDirPath, { recursive: true });
 
-    // recolectar recursos internos
+    // Recolectar recursos locales
     const resources = [];
-
     $('img').each((_, el) => {
         const src = $(el).attr('src');
         if (src) resources.push({ el, attr: 'src', url: new URL(src, pageUrl).href });
@@ -106,23 +114,26 @@ const pageLoader = async (pageUrl, outputDir = process.cwd()) => {
         if (src) resources.push({ el, attr: 'src', url: new URL(src, pageUrl).href });
     });
 
+    console.log('[page-loader] resources found:', resources.map(r => r.url));
+
     const baseHost = new URL(pageUrl).hostname;
 
-    // descargar recursos (serialmente para predecibilidad en tests)
+    // Descargar recursos secuencialmente (determinista para los tests)
     for (const { el, attr, url } of resources) {
         const filename = await downloadResource(url, assetsDirPath, baseHost, pageUrl);
         if (filename) {
-            // actualizar referencia a ruta relativa dentro de la carpeta *_files
-            // usar path.posix.join para asegurar '/' (aunque en Linux path.join también usa '/')
             $(el).attr(attr, path.posix.join(assetsDirName, filename));
+        } else {
+            console.log(`[page-loader] resource not saved (null): ${url}`);
         }
     }
 
-    // escribir HTML final
+    // Guardar HTML final
     const htmlFilename = `${baseName}.html`;
     const htmlPath = path.join(outputDir, htmlFilename);
     await fs.writeFile(htmlPath, $.html({ decodeEntities: false }));
 
+    console.log(`[page-loader] finished: wrote ${htmlPath}`);
     return htmlPath;
 };
 
