@@ -1,97 +1,136 @@
-import fs from 'fs/promises';
 import path from 'path';
+import fs from 'fs/promises';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { URL } from 'url';
+import createDebug from 'debug';
+import { Listr } from 'listr2';
 
-const pageLoader = async (url, outputDir = process.cwd()) => {
-    console.log(`[page-loader] start: ${url} -> ${outputDir}`);
+const debug = createDebug('page-loader');
+
+/**
+ * Normaliza URL a nombre seguro
+ */
+function urlToFilename(urlString) {
+    const url = new URL(urlString, 'http://dummy.base');
+    const host = url.host.replace(/^www\./, '');
+    const pathname = url.pathname.replace(/\/+$/, '');
+    const base = host + pathname;
+    const filename = base.replace(/[^a-z0-9]/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '') || 'index';
+    debug('urlToFilename:', urlString, '->', filename);
+    return filename;
+}
+
+/**
+ * Nombre seguro para recursos
+ */
+function urlToResourceName(resourceUrl, pageUrl) {
+    const absoluteUrl = new URL(resourceUrl, pageUrl);
+    const ext = path.extname(absoluteUrl.pathname);
+    const base = absoluteUrl.pathname.replace(ext, '');
+    const name = base.replace(/[^a-z0-9]/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    const result = `${name}${ext}`;
+    debug('urlToResourceName:', resourceUrl, '->', result);
+    return result;
+}
+
+/**
+ * Descarga recurso, lanza error si falla
+ */
+async function downloadResource(resourceUrl, outputDir, filename) {
+    const filepath = path.join(outputDir, filename);
+    debug('Downloading resource:', resourceUrl, '->', filepath);
 
     try {
-        await fs.access(outputDir);
-    } catch {
-        throw new Error(`Directorio de salida no encontrado: ${outputDir}`);
-    }
-
-    const { hostname, pathname } = new URL(url);
-    // Genera el nombre base (ej: site-com-blog-about)
-    const fileBaseName = path.join(hostname, pathname).replace(/[^a-z0-9]/gi, '-');
-    const htmlFileName = `${fileBaseName}.html`;
-    // Genera el nombre del directorio de recursos (ej: site-com-blog-about_files)
-    const resourceDirName = `${fileBaseName}_files`;
-    const resourceDirPath = path.join(outputDir, resourceDirName);
-    const htmlFilePath = path.join(outputDir, htmlFileName);
-
-    await fs.mkdir(resourceDirPath, { recursive: true });
-
-    let response;
-    try {
-        response = await axios.get(url);
+        const resp = await axios.get(resourceUrl, { responseType: 'arraybuffer' });
+        await fs.writeFile(filepath, resp.data);
+        debug('Saved resource:', filepath);
+        return filename;
     } catch (err) {
-        throw new Error(`Error al descargar la página principal: ${err.message}`);
+        debug('Error downloading resource:', resourceUrl, err.message);
+        throw new Error(`No se pudo descargar el recurso ${resourceUrl}: ${err.message}`);
     }
+}
 
-    const $ = cheerio.load(response.data);
-    const resources = [];
+/**
+ * Determina si un recurso es local
+ */
+function isLocalResource(resourceUrl, pageUrl) {
+    try {
+        return new URL(resourceUrl, pageUrl).origin === new URL(pageUrl).origin;
+    } catch {
+        return false;
+    }
+}
 
-    $('img[src], link[href], script[src]').each((_, element) => {
-        const tag = $(element);
-        const attrName = tag.attr('src') ? 'src' : 'href';
-        const attrValue = tag.attr(attrName);
-        if (!attrValue) return;
+/**
+ * Función principal page-loader con Listr para progreso
+ */
+export default async function pageLoader(pageUrl, outputDir = process.cwd()) {
+    debug('Starting pageLoader for:', pageUrl, 'outputDir:', outputDir);
 
-        const resourceUrl = new URL(attrValue, url);
+    const htmlFilename = `${urlToFilename(pageUrl)}.html`;
+    const htmlFilePath = path.join(outputDir, htmlFilename);
+    const resourcesDir = `${htmlFilePath.replace(/\.html$/, '')}_files`;
 
-        // Solo procesar recursos en el mismo dominio
-        if (resourceUrl.hostname === hostname) {
+    try {
+        const { data: html } = await axios.get(pageUrl);
+        debug('Fetched HTML for:', pageUrl);
 
-            // --- CÓDIGO CORREGIDO PARA GENERAR resourceFileName ---
+        await fs.mkdir(resourcesDir, { recursive: true });
+        const $ = cheerio.load(html);
 
-            // 1. Obtener la ruta del recurso, eliminando el '/' inicial si existe.
-            const resourcePath = resourceUrl.pathname.startsWith('/')
-                ? resourceUrl.pathname.substring(1)
-                : resourceUrl.pathname;
+        // Recolectamos todos los recursos locales
+        const resources = [];
 
-            // 2. Separar la extensión (ej: .css)
-            const extension = path.extname(resourcePath);
+        $('img').toArray().forEach(img => {
+            const src = $(img).attr('src');
+            if (src && isLocalResource(src, pageUrl)) {
+                const absoluteUrl = new URL(src, pageUrl).toString();
+                const filename = urlToResourceName(src, pageUrl);
+                resources.push({ el: img, attr: 'src', url: absoluteUrl, filename, type: 'img' });
+            }
+        });
 
-            // 3. Obtener la base del nombre (ej: assets/styles)
-            //    Si no hay extensión, esto es todo el resourcePath
-            const baseResourceName = resourcePath.slice(0, -extension.length);
+        $('link[rel="stylesheet"]').toArray().forEach(link => {
+            const href = $(link).attr('href');
+            if (href && isLocalResource(href, pageUrl)) {
+                const absoluteUrl = new URL(href, pageUrl).toString();
+                const filename = urlToResourceName(href, pageUrl);
+                resources.push({ el: link, attr: 'href', url: absoluteUrl, filename, type: 'css' });
+            }
+        });
 
-            // 4. Sanitizar la base: reemplazamos todo lo que NO es alfanumérico por un guion.
-            //    Esto convierte: assets/styles -> assets-styles
-            //    También maneja casos sin extensión (ej: /users/1 -> users-1)
-            const sanitizedBaseResourceName = baseResourceName.replace(/[^a-z0-9]/gi, '-').replace(/-{2,}/g, '-');
+        $('script[src]').toArray().forEach(script => {
+            const src = $(script).attr('src');
+            if (src && isLocalResource(src, pageUrl)) {
+                const absoluteUrl = new URL(src, pageUrl).toString();
+                const filename = urlToResourceName(src, pageUrl);
+                resources.push({ el: script, attr: 'src', url: absoluteUrl, filename, type: 'js' });
+            }
+        });
 
-            // 5. Construir el nombre de archivo final (ej: site-com-blog-about-assets-styles.css)
-            const resourceFileName = `${fileBaseName}-${sanitizedBaseResourceName}${extension}`;
+        // Listr para mostrar progreso concurrente
+        const tasks = new Listr(
+            resources.map(res => ({
+                title: `Downloading ${res.type}: ${res.filename}`,
+                task: async () => {
+                    const localName = await downloadResource(res.url, resourcesDir, res.filename);
+                    $(res.el).attr(res.attr, path.posix.join(path.basename(resourcesDir), localName));
+                }
+            })),
+            { concurrent: true, exitOnError: false }
+        );
 
-            // --- FIN CÓDIGO CORREGIDO ---
+        await tasks.run();
+        await fs.writeFile(htmlFilePath, $.html());
+        debug('Saved HTML:', htmlFilePath);
 
-            const resourcePathFull = path.join(resourceDirPath, resourceFileName);
+        return htmlFilePath;
 
-            // Modificamos el atributo en el HTML para que apunte a la ruta relativa
-            // Ej: src="site-com-blog-about_files/site-com-blog-about-assets-styles.css"
-            tag.attr(attrName, path.join(resourceDirName, resourceFileName));
-
-            resources.push({ resourceUrl: resourceUrl.href, filePath: resourcePathFull });
-        }
-    });
-
-    await fs.writeFile(htmlFilePath, $.html(), 'utf-8');
-
-    await Promise.all(resources.map(async ({ resourceUrl, filePath }) => {
-        try {
-            const res = await axios.get(resourceUrl, { responseType: 'arraybuffer' });
-            await fs.writeFile(filePath, res.data);
-        } catch (err) {
-            // Error amigable en consola si no se puede descargar el recurso
-            console.error(`[page-loader] no se pudo descargar ${resourceUrl}: ${err.message}`);
-        }
-    }));
-
-    console.log(`[page-loader] finished: ${htmlFilePath}`);
-    return htmlFilePath;
-};
-
-export default pageLoader;
+    } catch (err) {
+        console.error(`Error: ${err.message}`);
+        debug('Error in pageLoader:', err.message);
+        process.exit(1); // Termina con código de error
+    }
+}

@@ -1,69 +1,71 @@
-import axios from 'axios';
-import path from 'path';
 import fs from 'fs/promises';
-import { URL } from 'url';
-import cheerio from 'cheerio';
+import os from 'os';
+import path from 'path';
+import nock from 'nock';
+import pageLoader from '../src/index.js';
 
-// Convierte URL a un nombre de archivo seguro
-function urlToFilename(urlStr) {
-    const { hostname, pathname } = new URL(urlStr);
-    let fileName = `${hostname}${pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
-    if (fileName.endsWith('-')) fileName = fileName.slice(0, -1);
-    return fileName + '.html';
-}
+let tempDir;
 
-// Convierte URL de recurso a nombre de archivo
-function resourceToFilename(pageUrl, resourceUrl) {
-    const pageHost = new URL(pageUrl).hostname;
-    const urlObj = new URL(resourceUrl, pageUrl);
-    let name = `${urlObj.hostname}${urlObj.pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
-    if (urlObj.pathname.endsWith('/')) name += '-index';
-    const ext = path.extname(urlObj.pathname) || '.html';
-    return name + ext;
-}
+beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'page-loader-'));
+});
 
-async function downloadResource(url, filepath) {
-    const { data } = await axios.get(url, { responseType: 'arraybuffer' });
-    await fs.mkdir(path.dirname(filepath), { recursive: true });
-    await fs.writeFile(filepath, data);
-}
+test('downloads page', async () => {
+    const url = 'https://example.com/test';
+    nock('https://example.com').get('/test').reply(200, '<html>Test</html>');
 
-export default async function pageLoader(pageUrl, outputDir) {
-    // 1. Descargar HTML
-    const { data: html } = await axios.get(pageUrl);
-    const $ = cheerio.load(html);
+    const filePath = await pageLoader(url, tempDir);
+    const content = await fs.readFile(filePath, 'utf-8');
 
-    // 2. Crear carpeta de recursos
-    const htmlFilename = urlToFilename(pageUrl);
-    const resourcesDir = path.join(outputDir, htmlFilename.replace('.html', '_files'));
-    await fs.mkdir(resourcesDir, { recursive: true });
+    expect(content).toContain('Test');
+});
 
-    // 3. Seleccionar recursos: img, script, link[rel=stylesheet]
-    const resources = [];
+test('downloads HTML with images', async () => {
+    const htmlFixture = `
+    <html><body>
+      <img src="/assets/test.png" />
+    </body></html>
+  `;
 
-    $('img[src]').each((i, el) => resources.push({ el, attr: 'src' }));
-    $('script[src]').each((i, el) => resources.push({ el, attr: 'src' }));
-    $('link[rel="stylesheet"][href]').each((i, el) => resources.push({ el, attr: 'href' }));
+    nock('https://example.com').get('/test').reply(200, htmlFixture);
+    nock('https://example.com').get('/assets/test.png').reply(200, Buffer.from([1, 2, 3]));
 
-    for (const { el, attr } of resources) {
-        const resUrl = $(el).attr(attr);
-        if (!resUrl) continue;
+    const filePath = await pageLoader('https://example.com/test', tempDir);
+    const savedHtml = await fs.readFile(filePath, 'utf-8');
 
-        const filename = resourceToFilename(pageUrl, resUrl);
-        const localPath = path.join(resourcesDir, filename);
+    // La ruta generada ahora incluye el prefijo "assets-"
+    expect(savedHtml).toMatch(/_files\/assets-test\.png/);
+});
 
-        try {
-            await downloadResource(resUrl, localPath);
-            // Reescribir HTML para apuntar al archivo local
-            $(el).attr(attr, path.join(path.basename(resourcesDir), filename));
-        } catch (err) {
-            console.error(`Failed to download ${resUrl}:`, err.message);
-        }
-    }
+test('downloads page with images, CSS and JS', async () => {
+    const htmlFixture = `
+    <html>
+      <head>
+        <link rel="stylesheet" href="/assets/application.css">
+        <link rel="stylesheet" href="https://cdn.example.com/style.css">
+      </head>
+      <body>
+        <img src="/images/logo.png">
+        <script src="/js/app.js"></script>
+        <script src="https://cdn.example.com/script.js"></script>
+      </body>
+    </html>`;
 
-    // 4. Guardar HTML modificado
-    const finalHtmlPath = path.join(outputDir, htmlFilename);
-    await fs.writeFile(finalHtmlPath, $.html());
+    nock('https://example.com').get('/test').reply(200, htmlFixture);
 
-    return finalHtmlPath;
-}
+    nock('https://example.com').get('/assets/application.css').reply(200, 'body { background: #fff; }');
+    nock('https://example.com').get('/images/logo.png').reply(200, Buffer.from([1, 2, 3]));
+    nock('https://example.com').get('/js/app.js').reply(200, 'console.log("test");');
+
+    const filePath = await pageLoader('https://example.com/test', tempDir);
+    const savedHtml = await fs.readFile(filePath, 'utf-8');
+
+    // Recursos locales con nombres generados por page-loader
+    expect(savedHtml).toMatch(/_files\/assets-application\.css/);
+    expect(savedHtml).toMatch(/_files\/images-logo\.png/);
+    expect(savedHtml).toMatch(/_files\/js-app\.js/);
+
+    // Recursos externos no se modifican
+    expect(savedHtml).toMatch(/https:\/\/cdn\.example\.com\/style\.css/);
+    expect(savedHtml).toMatch(/https:\/\/cdn\.example\.com\/script\.js/);
+});
