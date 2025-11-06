@@ -1,43 +1,53 @@
+import { jest } from '@jest/globals';
+import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import fs from 'fs/promises';
 import nock from 'nock';
-import pageLoader from '../src/index.js';
+import debug from 'debug';
+import pageLoader from '../src/pageLoader.js';
 
-nock.disableNetConnect();
-
-const baseUrl = 'https://codica.la';
-const html = `
+const testUrl = 'https://codica.la/cursos';
+const htmlFixture = `
 <!DOCTYPE html>
-<html><body>
-<img src="/assets/professions/nodejs.png">
-<link rel="stylesheet" href="/assets/style.css">
-<script src="/packs/js/runtime.js"></script>
-</body></html>`;
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Cursos</title>
+  <link rel="stylesheet" href="/assets/application.css">
+</head>
+<body>
+  <img src="/assets/professions/nodejs.png" alt="Node.js" />
+  <script src="/packs/js/runtime.js"></script>
+</body>
+</html>
+`;
 
-const imgData = Buffer.from('imagecontent');
-const cssData = 'body{color:red}';
-const jsData = 'console.log("runtime")';
+const cssFixture = 'body { background: red; }';
+const imgFixture = Buffer.from('fake image');
+const jsFixture = 'console.log("runtime loaded");';
 
-describe('page-loader', () => {
-  let tmpDir;
-
-  beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'page-loader-'));
-  });
-
-  test('descarga página y recursos', async () => {
-    nock(baseUrl).get('/cursos').reply(200, html);
-    nock(baseUrl).get('/assets/professions/nodejs.png').reply(200, imgData);
-    nock(baseUrl).get('/assets/style.css').reply(200, cssData);
-    nock(baseUrl).get('/packs/js/runtime.js').reply(200, jsData);
-
-    const filePath = await pageLoader(`${baseUrl}/cursos`, tmpDir);
-    const htmlSaved = await fs.readFile(filePath, 'utf-8');
-
-    expect(htmlSaved).toContain('codica-la-cursos_files/');
-    const resourcesDir = path.join(tmpDir, 'codica-la-cursos_files');
-    const files = await fs.readdir(resourcesDir);
-    expect(files.length).toBe(3);
-  });
+beforeAll(() => {
+  nock.disableNetConnect();
 });
+
+test('descarga página y recursos locales', async () => {
+  // Mock HTML principal
+  nock('https://codica.la').get('/cursos').reply(200, htmlFixture);
+
+  // Mock recursos
+  nock('https://codica.la').get('/assets/application.css').reply(200, cssFixture);
+  nock('https://codica.la').get('/assets/professions/nodejs.png').reply(200, imgFixture);
+  nock('https://codica.la').get('/packs/js/runtime.js').reply(200, jsFixture);
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'page-loader-'));
+  const filePath = await pageLoader(testUrl, tmpDir);
+
+  const savedHtml = await fs.readFile(filePath, 'utf-8');
+  expect(savedHtml).toContain('codica-la-cursos_files/');
+
+  const resourcesDir = path.join(tmpDir, 'codica-la-cursos_files');
+  const files = await fs.readdir(resourcesDir);
+  expect(files.length).toBe(3);
+});
+
+process.env.DEBUG = 'page-loader,axios,nock*';

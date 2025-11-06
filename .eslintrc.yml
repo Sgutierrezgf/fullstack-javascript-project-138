@@ -1,28 +1,20 @@
 env:
+  es2021: true
   node: true
   jest: true
-  es2022: true
 
-extends:
-  - airbnb-base
-  - plugin:jest/recommended
+extends: airbnb-base
 
 parserOptions:
   ecmaVersion: latest
   sourceType: module
 
 rules:
-  # Permite importaciones de devDependencies en archivos de prueba
-  import/no-extraneous-dependencies:
+  no-unused-vars: warn
+  no-console: off
+  no-underscore-dangle: off
+  no-shadow: off
+  import/extensions:
     - error
-    - devDependencies:
-      - "**/*.test.js"
-      - "**/*.spec.js"
-  # Prefiere export default si solo hay un export
-  import/prefer-default-export: off
-  # No es necesario .js en las importaciones
-  import/extensions: off
-  # Permite console.log y console.error en el CLI
-  no-console:
-    - error
-    - allow: ["log", "error"]
+    - ignorePackages
+    - js: always
