@@ -7,10 +7,14 @@ import { Listr } from 'listr2';
 
 const log = debug('page-loader');
 
-const buildFileName = (url, ext = '.html') => {
-    const { hostname, pathname } = new URL(url);
-    const name = `${hostname}${pathname}`.replace(/[^a-zA-Z0-9]/g, '-');
-    return `${name}${ext}`;
+const buildResourceFileName = (url) => {
+    const { pathname } = new URL(url);
+    return pathname
+        .replace(/^\/+/, '')      // quitar la barra inicial
+        .replace(/\//g, '-')      // reemplazar subdirectorios por -
+        .replace(/\./g, '-')      // reemplazar puntos por -
+        .replace(/[^a-zA-Z0-9-]/g, '') // limpiar caracteres extraños
+        + path.extname(pathname); // conservar extensión
 };
 
 const isLocalResource = (url, base) => {
@@ -78,7 +82,7 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
         if (isLocalResource(link, baseUrl.href)) {
             const fullUrl = new URL(link, baseUrl.href).href;
             const ext = path.extname(link) || '.html';
-            const resourceFileName = buildFileName(fullUrl, ext);
+            const resourceFileName = buildResourceFileName(fullUrl);
 
             const localPath = path.posix.join(resourcesDirName, resourceFileName);
             const outputPath = path.join(resourcesDirPath, resourceFileName);
