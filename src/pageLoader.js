@@ -48,8 +48,23 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     const resourcesDirName = mainFileName.replace('.html', '_files');
     const resourcesDirPath = path.join(outputDir, resourcesDirName);
 
-    await fs.mkdir(resourcesDirPath, { recursive: true });
+    // Comprobar que outputDir existe y es un directorio accesible
+    try {
+        const stats = await fs.stat(outputDir);
+        if (!stats.isDirectory()) {
+            throw new Error(`El destino ${outputDir} no es un directorio.`);
+        }
+    } catch (err) {
+        // Lanzar error si no existe o no es accesible (esto hace que los tests que esperan un reject pasen)
+        throw new Error(`El directorio de salida "${outputDir}" no existe o no es accesible: ${err.message}`);
+    }
 
+    // Ahora sí podemos crear el directorio de recursos dentro del outputDir
+    try {
+        await fs.mkdir(resourcesDirPath, { recursive: true });
+    } catch (err) {
+        throw new Error(`No se pudo crear el directorio de recursos ${resourcesDirPath}: ${err.message}`);
+    }
     const $ = cheerio.load(html);
     const baseUrl = new URL(url);
     const resources = [];
