@@ -14,6 +14,12 @@ const formatFilename = (url) => {
 const downloadFile = (url, outputPath, responseType = 'arraybuffer') =>
     axios.get(url, { responseType }).then((res) => fs.writeFile(outputPath, res.data));
 
+const isLocalResource = (resourceUrl, baseUrl) => {
+    const base = new URL(baseUrl);
+    const full = new URL(resourceUrl, baseUrl);
+    return full.hostname === base.hostname;
+};
+
 const pageLoader = (url, outputDir = process.cwd()) => {
     const pageName = formatFilename(url);
     const htmlFilename = `${pageName}.html`;
@@ -26,30 +32,46 @@ const pageLoader = (url, outputDir = process.cwd()) => {
         .then(async (response) => {
             const html = response.data;
             const $ = cheerio.load(html);
+
             await fs.mkdir(resourcesDir, { recursive: true });
 
-            const imagePromises = $('img').map(async (_, img) => {
-                const src = $(img).attr('src');
-                if (!src) return;
+            // Selecciona todos los elementos relevantes
+            const resourceElements = [
+                ...$('img').toArray(),
+                ...$('link[href]').toArray(),
+                ...$('script[src]').toArray(),
+            ];
 
-                const imageUrl = new URL(src, url).href;
-                const { hostname, pathname } = new URL(imageUrl);
-                const ext = path.extname(pathname) || '.png';
+            const downloadPromises = resourceElements.map(async (el) => {
+                const tag = el.name;
+                const attr = tag === 'link' ? 'href' : 'src';
+                const value = $(el).attr(attr);
+                if (!value) return;
+
+                // Solo recursos locales
+                if (!isLocalResource(value, url)) return;
+
+                const resourceUrl = new URL(value, url).href;
+                const { hostname, pathname } = new URL(resourceUrl);
+                const ext = path.extname(pathname) || '.html';
                 const base = pathname.slice(0, -ext.length);
-                const imageFilename = `${hostname}${base}`.replace(/[^a-zA-Z0-9]/g, '-');
-                const fullImageName = `${imageFilename}${ext}`;
-                const imagePath = path.join(resourcesDir, fullImageName);
+                const resourceFilename = `${hostname}${base}`.replace(/[^a-zA-Z0-9]/g, '-');
+                const fullResourceName = `${resourceFilename}${ext}`;
+                const resourcePath = path.join(resourcesDir, fullResourceName);
 
-                await downloadFile(imageUrl, imagePath, 'arraybuffer');
+                // Descargar (binario o texto según tipo)
+                const responseType = ext.match(/\.(png|jpg|jpeg|gif)$/i) ? 'arraybuffer' : 'utf-8';
+                const res = await axios.get(resourceUrl, { responseType });
+                await fs.writeFile(resourcePath, res.data);
 
-                const newSrc = `${resourcesDirName}/${fullImageName}`;
-                $(img).attr('src', newSrc);
-            }).get();
-            await Promise.all(imagePromises);
+                // Reemplazar en el HTML
+                const newPath = `${resourcesDirName}/${fullResourceName}`;
+                $(el).attr(attr, newPath);
+            });
 
-            // Guardar HTML modificado
+            await Promise.all(downloadPromises);
+
             await fs.writeFile(htmlPath, $.html());
-
             return htmlPath;
         });
 };
