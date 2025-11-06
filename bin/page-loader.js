@@ -5,18 +5,18 @@ import pageLoader from '../src/index.js';
 const program = new Command();
 
 program
-    .name('page-loader')
-    .description('Page loader utility')
     .version('1.0.0')
-    .option('-o, --output [dir]', 'output dir', process.cwd())
-    .arguments('<url>')
-    .action((url, options) => {
-        pageLoader(url, options.output)
-            .then((filepath) => console.log(filepath))
-            .catch((err) => {
-                console.error(`Error: ${err.message}`);
-                process.exit(1);
-            });
+    .description('Descarga páginas web junto con sus recursos.')
+    .argument('<url>', 'URL de la página a descargar')
+    .option('-o, --output [dir]', 'Directorio de salida', process.cwd())
+    .action(async (url, options) => {
+        try {
+            const filePath = await pageLoader(url, options.output);
+            console.log(`\n✅ Página descargada correctamente en: ${filePath}\n`);
+        } catch (error) {
+            console.error(`❌ Error: ${error.message}`);
+            process.exit(1);
+        }
     });
 
 program.parse();

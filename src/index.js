@@ -2,17 +2,17 @@ import axios from 'axios';
 import path from 'path';
 import fs from 'fs/promises';
 import * as cheerio from 'cheerio';
+import { Listr } from 'listr2';
+import debugLib from 'debug';
+
+const debug = debugLib('page-loader');
 
 const formatFilename = (url) => {
     const { hostname, pathname } = new URL(url);
-    const cleanPath = `${hostname}${pathname}`
+    return `${hostname}${pathname}`
         .replace(/[^a-zA-Z0-9]/g, '-')
         .replace(/-$/, '');
-    return cleanPath;
 };
-
-const downloadFile = (url, outputPath, responseType = 'arraybuffer') =>
-    axios.get(url, { responseType }).then((res) => fs.writeFile(outputPath, res.data));
 
 const isLocalResource = (resourceUrl, baseUrl) => {
     const base = new URL(baseUrl);
@@ -20,7 +20,13 @@ const isLocalResource = (resourceUrl, baseUrl) => {
     return full.hostname === base.hostname;
 };
 
-const pageLoader = (url, outputDir = process.cwd()) => {
+const downloadResource = async (resourceUrl, filePath, responseType = 'arraybuffer') => {
+    const response = await axios.get(resourceUrl, { responseType });
+    await fs.writeFile(filePath, response.data);
+    return filePath;
+};
+
+const pageLoader = async (url, outputDir = process.cwd()) => {
     const pageName = formatFilename(url);
     const htmlFilename = `${pageName}.html`;
     const resourcesDirName = `${pageName}_files`;
@@ -28,52 +34,71 @@ const pageLoader = (url, outputDir = process.cwd()) => {
     const htmlPath = path.join(outputDir, htmlFilename);
     const resourcesDir = path.join(outputDir, resourcesDirName);
 
-    return axios.get(url)
-        .then(async (response) => {
-            const html = response.data;
-            const $ = cheerio.load(html);
+    debug(`Descargando página principal: ${url}`);
 
-            await fs.mkdir(resourcesDir, { recursive: true });
+    let response;
+    try {
+        response = await axios.get(url);
+    } catch (err) {
+        console.error(`❌ Error al descargar la página principal: ${err.message}`);
+        process.exit(1);
+    }
 
-            // Selecciona todos los elementos relevantes
-            const resourceElements = [
-                ...$('img').toArray(),
-                ...$('link[href]').toArray(),
-                ...$('script[src]').toArray(),
-            ];
+    const $ = cheerio.load(response.data);
+    await fs.mkdir(resourcesDir, { recursive: true });
 
-            const downloadPromises = resourceElements.map(async (el) => {
-                const tag = el.name;
-                const attr = tag === 'link' ? 'href' : 'src';
-                const value = $(el).attr(attr);
-                if (!value) return;
+    const elements = [
+        ...$('img').toArray(),
+        ...$('link[href]').toArray(),
+        ...$('script[src]').toArray(),
+    ];
 
-                // Solo recursos locales
-                if (!isLocalResource(value, url)) return;
+    const tasks = elements
+        .map((el) => {
+            const tag = el.name;
+            const attr = tag === 'link' ? 'href' : 'src';
+            const value = $(el).attr(attr);
+            if (!value) return null;
 
-                const resourceUrl = new URL(value, url).href;
-                const { hostname, pathname } = new URL(resourceUrl);
-                const ext = path.extname(pathname) || '.html';
-                const base = pathname.slice(0, -ext.length);
-                const resourceFilename = `${hostname}${base}`.replace(/[^a-zA-Z0-9]/g, '-');
-                const fullResourceName = `${resourceFilename}${ext}`;
-                const resourcePath = path.join(resourcesDir, fullResourceName);
+            const fullUrl = new URL(value, url).href;
 
-                // Descargar (binario o texto según tipo)
-                const responseType = ext.match(/\.(png|jpg|jpeg|gif)$/i) ? 'arraybuffer' : 'utf-8';
-                const res = await axios.get(resourceUrl, { responseType });
-                await fs.writeFile(resourcePath, res.data);
+            // Ignorar recursos externos
+            if (!isLocalResource(fullUrl, url)) {
+                debug(`Recurso externo ignorado: ${fullUrl}`);
+                return null;
+            }
 
-                // Reemplazar en el HTML
-                const newPath = `${resourcesDirName}/${fullResourceName}`;
-                $(el).attr(attr, newPath);
-            });
+            const { hostname, pathname } = new URL(fullUrl);
+            const ext = path.extname(pathname) || '.html';
+            const base = pathname.slice(0, -ext.length);
+            const fileName = `${hostname}${base}`.replace(/[^a-zA-Z0-9]/g, '-');
+            const filePath = path.join(resourcesDir, `${fileName}${ext}`);
 
-            await Promise.all(downloadPromises);
+            const responseType = /\.(png|jpg|jpeg|gif|ico)$/i.test(ext)
+                ? 'arraybuffer'
+                : 'utf8';
 
-            await fs.writeFile(htmlPath, $.html());
-            return htmlPath;
-        });
+            return {
+                title: `Descargando ${fullUrl}`,
+                task: async () => {
+                    try {
+                        await downloadResource(fullUrl, filePath, responseType);
+                        const newPath = `${resourcesDirName}/${fileName}${ext}`;
+                        $(el).attr(attr, newPath);
+                    } catch (error) {
+                        debug(`Error al descargar ${fullUrl}: ${error.message}`);
+                    }
+                },
+            };
+        })
+        .filter(Boolean);
+
+    const listr = new Listr(tasks, { concurrent: true });
+    await listr.run();
+
+    await fs.writeFile(htmlPath, $.html());
+    console.log(`✅ Página descargada correctamente en: ${htmlPath}`);
+    return htmlPath;
 };
 
 export default pageLoader;

@@ -54,4 +54,9 @@ describe('page-loader - descarga de recursos locales (img, css, js)', () => {
     await expect(fs.access(jsFile)).resolves.toBeUndefined();
     await expect(fs.access(imgFile)).resolves.toBeUndefined();
   });
+
+  test('falla si la URL no existe', async () => {
+    await expect(pageLoader('https://dominio-invalido.xyz123/'))
+      .rejects.toThrow(/No se pudo resolver la dirección/);
+  });
 });
