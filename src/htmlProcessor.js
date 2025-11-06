@@ -1,7 +1,11 @@
 import * as cheerio from 'cheerio';
+import debug from 'debug';
 import { buildResourceName } from './utils.js';
 
+const log = debug('page-loader:html');
+
 export default (html, baseUrl, dirName) => {
+    log(`Procesando HTML para: ${baseUrl}`);
     const $ = cheerio.load(html);
     const resources = [];
 
@@ -19,10 +23,14 @@ export default (html, baseUrl, dirName) => {
             const localName = buildResourceName(baseUrl, oldLink);
             if (!localName) return;
 
-            resources.push({ url: new URL(oldLink, baseUrl).href, name: localName });
+            const absUrl = new URL(oldLink, baseUrl).href;
+            log(`Reemplazando ${tag} → ${absUrl} con ${dirName}/${localName}`);
+
+            resources.push({ url: absUrl, name: localName });
             $(el).attr(attr, `${dirName}/${localName}`);
         });
     });
 
+    log(`Procesamiento de HTML completo. Recursos locales: ${resources.length}`);
     return { html: $.html(), resources };
 };
