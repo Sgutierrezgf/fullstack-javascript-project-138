@@ -1,97 +1,57 @@
-import fs from 'fs/promises';
-import path from 'path';
 import axios from 'axios';
+import path from 'path';
+import fs from 'fs/promises';
 import * as cheerio from 'cheerio';
-import debug from 'debug';
-import { URL } from 'url';
 
-const log = debug('page-loader');
-
-// Convierte URL en nombre de archivo válido
-const urlToFilename = (url) => {
-    const { host, pathname } = new URL(url);
-    const fullPath = path.join(host, pathname);
-    const clean = fullPath
-        .replace(/(^\W+|\/$)/g, '')
-        .replace(/[^a-zA-Z0-9]/g, '-');
-    return clean;
+const formatFilename = (url) => {
+    const { hostname, pathname } = new URL(url);
+    const cleanPath = `${hostname}${pathname}`
+        .replace(/[^a-zA-Z0-9]/g, '-')
+        .replace(/-$/, '');
+    return cleanPath;
 };
 
-// Descarga archivo desde una URL y lo guarda localmente
-const downloadResource = async (resourceUrl, filepath) => {
-    const response = await axios.get(resourceUrl, { responseType: 'arraybuffer' });
-    await fs.writeFile(filepath, response.data);
-    log(`Saved resource: ${filepath}`);
-};
+const downloadFile = (url, outputPath, responseType = 'arraybuffer') =>
+    axios.get(url, { responseType }).then((res) => fs.writeFile(outputPath, res.data));
 
-// Función principal
-const pageLoader = async (url, outputDir = process.cwd()) => {
-    log(`Starting pageLoader for: ${url} outputDir: ${outputDir}`);
-    const pageName = urlToFilename(url);
+const pageLoader = (url, outputDir = process.cwd()) => {
+    const pageName = formatFilename(url);
     const htmlFilename = `${pageName}.html`;
-    const resourcesDir = `${pageName}_files`;
-    const htmlFilepath = path.join(outputDir, htmlFilename);
-    const resourcesDirPath = path.join(outputDir, resourcesDir);
+    const resourcesDirName = `${pageName}_files`;
 
-    try {
-        // Verificar que el directorio existe y sea accesible
-        const stats = await fs.stat(outputDir);
-        if (!stats.isDirectory()) {
-            throw new Error(`Output path is not a directory: ${outputDir}`);
-        }
-    } catch (err) {
-        // Lanzar error si el directorio no existe o no es válido
-        throw new Error(`Cannot access output directory: ${outputDir}`);
-    }
+    const htmlPath = path.join(outputDir, htmlFilename);
+    const resourcesDir = path.join(outputDir, resourcesDirName);
 
-    let response;
-    try {
-        response = await axios.get(url);
-    } catch (err) {
-        if (err.response) {
-            throw new Error(`Request failed with status ${err.response.status}`);
-        }
-        throw new Error(`Network error: ${err.message}`);
-    }
+    return axios.get(url)
+        .then(async (response) => {
+            const html = response.data;
+            const $ = cheerio.load(html);
+            await fs.mkdir(resourcesDir, { recursive: true });
 
-    const $ = cheerio.load(response.data);
-    const resources = [];
+            const imagePromises = $('img').map(async (_, img) => {
+                const src = $(img).attr('src');
+                if (!src) return;
 
-    const tags = [
-        { selector: 'img', attr: 'src' },
-        { selector: 'link', attr: 'href' },
-        { selector: 'script', attr: 'src' },
-    ];
+                const imageUrl = new URL(src, url).href;
+                const { hostname, pathname } = new URL(imageUrl);
+                const ext = path.extname(pathname) || '.png';
+                const base = pathname.slice(0, -ext.length);
+                const imageFilename = `${hostname}${base}`.replace(/[^a-zA-Z0-9]/g, '-');
+                const fullImageName = `${imageFilename}${ext}`;
+                const imagePath = path.join(resourcesDir, fullImageName);
 
-    tags.forEach(({ selector, attr }) => {
-        $(selector).each((_, element) => {
-            const value = $(element).attr(attr);
-            if (value && !value.startsWith('http') && !value.startsWith('//')) {
-                const absoluteUrl = new URL(value, url).toString();
-                const resourceName = urlToFilename(absoluteUrl) + path.extname(value);
-                const resourcePath = path.join(resourcesDir, resourceName);
-                $(element).attr(attr, resourcePath);
-                resources.push({ absoluteUrl, resourcePath });
-            }
+                await downloadFile(imageUrl, imagePath, 'arraybuffer');
+
+                const newSrc = `${resourcesDirName}/${fullImageName}`;
+                $(img).attr('src', newSrc);
+            }).get();
+            await Promise.all(imagePromises);
+
+            // Guardar HTML modificado
+            await fs.writeFile(htmlPath, $.html());
+
+            return htmlPath;
         });
-    });
-
-    await fs.mkdir(resourcesDirPath, { recursive: true });
-    log(`Created resources directory: ${resourcesDirPath}`);
-
-    // Guardar recursos (CSS, imágenes, scripts, etc.)
-    const downloads = resources.map(({ absoluteUrl, resourcePath }) => {
-        const fullPath = path.join(outputDir, resourcePath);
-        return downloadResource(absoluteUrl, fullPath);
-    });
-    await Promise.all(downloads);
-
-    // Guardar HTML modificado
-    await fs.writeFile(htmlFilepath, $.html());
-    log(`Saved HTML: ${htmlFilepath}`);
-
-    return htmlFilepath;
 };
 
 export default pageLoader;
-export { urlToFilename };
