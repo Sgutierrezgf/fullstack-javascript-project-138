@@ -1,39 +1,54 @@
+// src/loader.js (ejemplo completo y robusto)
 import axios from 'axios';
-import { promises as fs } from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
-import * as cheerio from 'cheerio';
-import { URL } from 'url';
+import debug from 'debug';
+import { makeFileNameFromUrl, makeDirNameFromUrl } from './utils.js';
+import processHtml from './htmlProcessor.js';
 import downloadResources from './resources.js';
 
+const log = debug('page-loader');
+
 const pageLoader = async (url, outputDir = process.cwd()) => {
-    const parsedUrl = new URL(url);
-    const pageBaseName = `${parsedUrl.hostname.replace(/\W/g, '-')}`;
-    const htmlFilePath = path.join(outputDir, `${pageBaseName}.html`);
-    const resourcesDir = path.join(outputDir, `${pageBaseName}_files`);
+    log(`Start downloading: ${url} -> ${outputDir}`);
+    const fileName = makeFileNameFromUrl(url);
+    const resourcesDirName = makeDirNameFromUrl(url);
+    const filePath = path.join(outputDir, fileName);
+    const resourcesDirPath = path.join(outputDir, resourcesDirName);
 
-    const response = await axios.get(url);
-    const html = response.data;
-    const $ = cheerio.load(html);
+    // Verificar y crear directorio destino si es necesario
+    try {
+        await fs.access(outputDir);
+    } catch (err) {
+        // Si no existe, propagar error para que los tests lo capturen
+        throw new Error(`El directorio de destino no existe: ${outputDir}`);
+    }
 
-    const resources = [];
-
-    $('img').each((i, elem) => {
-        const src = $(elem).attr('src');
-        if (src) {
-            const resourceUrl = new URL(src, url).href;
-            const fileName = path.basename(resourceUrl).replace(/\W/g, '-');
-            $(elem).attr('src', path.join(`${pageBaseName}_files`, fileName));
-            resources.push({ url: resourceUrl, fileName });
+    // Descargar HTML
+    const response = await axios.get(url).catch((err) => {
+        if (err.response) {
+            throw new Error(`Error HTTP ${err.response.status} al descargar ${url}`);
         }
+        throw new Error(`Error de red al descargar ${url}: ${err.message}`);
     });
 
-    await fs.writeFile(htmlFilePath, $.html());
-    await fs.mkdir(resourcesDir, { recursive: true });
+    if (response.status !== 200) {
+        throw new Error(`Error HTTP ${response.status} al descargar ${url}`);
+    }
 
-    // Mostrar progreso de descargas
-    await downloadResources(resources, resourcesDir);
+    const { html: processedHtml, resources } = processHtml(response.data, url, resourcesDirName);
 
-    return htmlFilePath;
+    // Asegurar que el directorio de recursos exista antes de descargar
+    await fs.mkdir(resourcesDirPath, { recursive: true });
+
+    // Descargar recursos (downloadResources debe devolver una promesa)
+    await downloadResources(resources, resourcesDirPath);
+
+    // Finalmente escribir el archivo HTML (espera esto)
+    await fs.writeFile(filePath, processedHtml, 'utf8');
+
+    log(`Saved page: ${filePath}`);
+    return filePath;
 };
 
 export default pageLoader;
