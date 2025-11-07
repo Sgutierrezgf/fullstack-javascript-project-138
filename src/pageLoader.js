@@ -7,7 +7,7 @@ import { Listr } from 'listr2';
 
 const log = debug('page-loader');
 
-// 🔹 Genera nombres válidos y planos para todos los recursos
+// 🔹 Genera nombres válidos para archivos principales
 const buildFileName = (url, extFallback = '.html') => {
   const { hostname, pathname } = new URL(url);
   const ext = path.extname(pathname) || extFallback;
@@ -19,7 +19,6 @@ const buildFileName = (url, extFallback = '.html') => {
   return `${cleanName}${ext}`;
 };
 
-// 🔹 Verifica si un recurso pertenece al mismo dominio
 const isLocalResource = (url, base) => {
   try {
     const resourceUrl = new URL(url, base);
@@ -30,7 +29,6 @@ const isLocalResource = (url, base) => {
   }
 };
 
-// 🔹 Descarga un recurso y lo guarda
 const downloadResource = async (url, outputPath) => {
   const response = await axios.get(url, { responseType: 'arraybuffer' });
   if (response.status !== 200) {
@@ -40,23 +38,9 @@ const downloadResource = async (url, outputPath) => {
   await fs.writeFile(outputPath, response.data);
 };
 
-// 🔹 Función principal
 const pageLoader = async (url, outputDir = process.cwd()) => {
   log(`Inicio descarga de: ${url}`);
 
-  // ✅ Verificar que el directorio de salida existe realmente
-  let stats;
-  try {
-    stats = await fs.stat(outputDir);
-  } catch {
-    throw new Error(`El directorio de salida "${outputDir}" no existe`);
-  }
-
-  if (!stats.isDirectory()) {
-    throw new Error(`El destino "${outputDir}" no es un directorio válido`);
-  }
-
-  // 🔹 Descargar HTML principal
   let response;
   try {
     response = await axios.get(url);
@@ -70,14 +54,12 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
   const resourcesDirName = mainFileName.replace('.html', '_files');
   const resourcesDirPath = path.join(outputDir, resourcesDirName);
 
-  // 🔹 Crear directorio de recursos (solo si el de salida existe)
   await fs.mkdir(resourcesDirPath, { recursive: true });
 
   const $ = cheerio.load(html);
   const baseUrl = new URL(url);
   const resources = [];
 
-  // 🔹 Buscar recursos locales (imágenes, CSS, JS)
   $('img[src], link[href], script[src]').each((_, el) => {
     const tag = el.tagName;
     const attr = tag === 'link' ? 'href' : 'src';
@@ -86,7 +68,18 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
 
     if (isLocalResource(link, baseUrl.href)) {
       const fullUrl = new URL(link, baseUrl.href).href;
-      const resourceFileName = buildFileName(fullUrl, path.extname(link) || '.bin');
+
+      // 🔹 nuevo formato de nombre esperado por los tests
+      const pageBaseName = mainFileName.replace('.html', '');
+      const relativePath = new URL(link, baseUrl.href).pathname;
+      const cleanResourceName = relativePath
+        .replace(/^\/+/, '')
+        .replace(/\//g, '-')
+        .replace(/\./g, '-')
+        .replace(/[^a-zA-Z0-9-]/g, '');
+      const ext = path.extname(link) || '';
+      const resourceFileName = `${pageBaseName}-${cleanResourceName}${ext}`;
+
       const resourceOutputPath = path.join(resourcesDirPath, resourceFileName);
       const localPath = path.posix.join(resourcesDirName, resourceFileName);
 
@@ -97,7 +90,6 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
 
   log(`Se encontraron ${resources.length} recursos locales`);
 
-  // 🔹 Descarga concurrente de recursos
   const tasks = new Listr(
     resources.map(({ fullUrl, outputPath }) => ({
       title: `Descargando ${fullUrl}`,
@@ -110,7 +102,6 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
 
   await tasks.run();
 
-  // 🔹 Guardar el HTML modificado
   await fs.writeFile(mainFilePath, $.html());
   log(`Archivo principal guardado en ${mainFilePath}`);
 
