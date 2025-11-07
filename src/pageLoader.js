@@ -96,8 +96,8 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     const normalizedPagePath = pagePathname || '';
 
     // Extensión real (si no hay, fallback '.html' para recursos HTML)
-    const extDetected = path.extname(normalizedResourcePath);
-    const ext = extDetected || '.html';
+    // const extDetected = path.extname(normalizedResourcePath);
+    // const ext = extDetected || '.html';
 
     let resourceFileName;
 
