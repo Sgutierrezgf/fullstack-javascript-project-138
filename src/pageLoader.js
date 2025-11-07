@@ -7,7 +7,6 @@ import { Listr } from 'listr2';
 
 const log = debug('page-loader');
 
-// 🔹 Genera nombres válidos para archivos principales
 const buildFileName = (url, extFallback = '.html') => {
   const { hostname, pathname } = new URL(url);
   const ext = path.extname(pathname) || extFallback;
@@ -41,6 +40,13 @@ const downloadResource = async (url, outputPath) => {
 const pageLoader = async (url, outputDir = process.cwd()) => {
   log(`Inicio descarga de: ${url}`);
 
+  // 🔹 Verificar si el directorio existe antes de continuar
+  try {
+    await fs.access(outputDir);
+  } catch {
+    throw new Error(`El directorio de salida no existe: ${outputDir}`);
+  }
+
   let response;
   try {
     response = await axios.get(url);
@@ -69,7 +75,6 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     if (isLocalResource(link, baseUrl.href)) {
       const fullUrl = new URL(link, baseUrl.href).href;
 
-      // 🔹 nuevo formato de nombre esperado por los tests
       const pageBaseName = mainFileName.replace('.html', '');
       const relativePath = new URL(link, baseUrl.href).pathname;
       const cleanResourceName = relativePath
