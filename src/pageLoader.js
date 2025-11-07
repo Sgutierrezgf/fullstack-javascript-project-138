@@ -89,7 +89,7 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     if (!isLocalResource(rawLink, baseUrl.href)) return;
 
     const resourceAbsoluteUrl = new URL(rawLink, baseUrl.href).href;
-    const resourcePathnameFull = new URL(resourceAbsoluteUrl).pathname; // e.g. '/blog/about/assets/styles.css' or '/assets/styles.css'
+    const resourcePathnameFull = new URL(resourceAbsoluteUrl).pathname;
 
     // Normalizar sin slash final
     const normalizedResourcePath = resourcePathnameFull.replace(/\/$/, '');
@@ -108,13 +108,13 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     } else if (normalizedPagePath && normalizedPagePath !== '/' && normalizedResourcePath.startsWith(`${normalizedPagePath}/`)) {
       // Caso 2: recurso dentro de la ruta de la página
       // quitar el prefijo de la ruta de la página para evitar duplicados "blog-about-blog-about"
-      let relativeAfterPage = normalizedResourcePath.slice(normalizedPagePath.length); // begins with '/'
+      let relativeAfterPage = normalizedResourcePath.slice(normalizedPagePath.length);
       if (!relativeAfterPage.startsWith('/')) relativeAfterPage = `/${relativeAfterPage}`;
       const nameWithoutExt = relativeAfterPage
-        .replace(/^\/+/, '')   // quitar slash inicial
+        .replace(/^\/+/, '') // quitar slash inicial
         .replace(path.extname(relativeAfterPage) || '', '') // quitar ext si existe
-        .replace(/\//g, '-')   // / -> -
-        .replace(/\./g, '-')   // . -> -
+        .replace(/\//g, '-') // / -> -
+        .replace(/\./g, '-') // . -> -
         .replace(/[^a-zA-Z0-9-]/g, '');
       // Asegurar que ext tenga punto si viene vacío
       const finalExt = path.extname(relativeAfterPage) || '.html';

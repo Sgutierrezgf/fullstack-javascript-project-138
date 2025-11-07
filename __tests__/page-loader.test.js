@@ -25,27 +25,27 @@ const imgFixture = Buffer.from('fake image');
 const jsFixture = 'console.log("runtime loaded");';
 
 beforeAll(() => {
-    nock.disableNetConnect();
+  nock.disableNetConnect();
 });
 
 test('descarga página y recursos locales', async () => {
-    // Mock HTML principal
-    nock('https://codica.la').get('/cursos').reply(200, htmlFixture);
+  // Mock HTML principal
+  nock('https://codica.la').get('/cursos').reply(200, htmlFixture);
 
-    // Mock recursos
-    nock('https://codica.la').get('/assets/application.css').reply(200, cssFixture);
-    nock('https://codica.la').get('/assets/professions/nodejs.png').reply(200, imgFixture);
-    nock('https://codica.la').get('/packs/js/runtime.js').reply(200, jsFixture);
+  // Mock recursos
+  nock('https://codica.la').get('/assets/application.css').reply(200, cssFixture);
+  nock('https://codica.la').get('/assets/professions/nodejs.png').reply(200, imgFixture);
+  nock('https://codica.la').get('/packs/js/runtime.js').reply(200, jsFixture);
 
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'page-loader-'));
-    const filePath = await pageLoader(testUrl, tmpDir);
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'page-loader-'));
+  const filePath = await pageLoader(testUrl, tmpDir);
 
-    const savedHtml = await fs.readFile(filePath, 'utf-8');
-    expect(savedHtml).toContain('codica-la-cursos_files/');
+  const savedHtml = await fs.readFile(filePath, 'utf-8');
+  expect(savedHtml).toContain('codica-la-cursos_files/');
 
-    const resourcesDir = path.join(tmpDir, 'codica-la-cursos_files');
-    const files = await fs.readdir(resourcesDir);
-    expect(files.length).toBe(3);
+  const resourcesDir = path.join(tmpDir, 'codica-la-cursos_files');
+  const files = await fs.readdir(resourcesDir);
+  expect(files.length).toBe(3);
 });
 
 process.env.DEBUG = 'page-loader,axios,nock*';
