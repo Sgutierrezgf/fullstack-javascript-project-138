@@ -7,10 +7,6 @@ import { Listr } from 'listr2';
 
 const log = debug('page-loader');
 
-/**
- * Genera nombre de archivo para la página principal.
- * Ej: https://site.com/blog/about  -> site-com-blog-about.html
- */
 const buildFileName = (url, extFallback = '.html') => {
   const { hostname, pathname } = new URL(url);
   const ext = path.extname(pathname) || extFallback;
@@ -54,7 +50,7 @@ const downloadResource = async (url, outputPath) => {
 const pageLoader = async (url, outputDir = process.cwd()) => {
   log(`Inicio descarga de: ${url}`);
 
-  // 1) Verificar que outputDir exista (test espera error si no existe)
+  // 1) Verificar que outputDir exista (test espera rejection si no existe)
   try {
     await fs.access(outputDir);
   } catch {
@@ -95,40 +91,46 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     const resourceAbsoluteUrl = new URL(rawLink, baseUrl.href).href;
     const resourcePathnameFull = new URL(resourceAbsoluteUrl).pathname; // e.g. '/blog/about/assets/styles.css' or '/assets/styles.css'
 
-    // Decide la estrategia de nombre:
-    // - Si resourcePathnameFull comienza con pagePathname + '/', el recurso es relativo a la página:
-    //    nombre => <pageBaseName>-<ruta-limpia><.ext>
-    // - Si no, nombre => <hostname>-<ruta-limpia><.ext>  (misma convención que buildFileName para recursos top-level)
+    // Normalizar sin slash final
+    const normalizedResourcePath = resourcePathnameFull.replace(/\/$/, '');
+    const normalizedPagePath = pagePathname || '';
+
+    // Extensión real (si no hay, fallback '.html' para recursos HTML)
+    const extDetected = path.extname(normalizedResourcePath);
+    const ext = extDetected || '.html';
+
     let resourceFileName;
 
-    // extraer ext y construir nameWithoutExt de forma segura
-    const ext = path.extname(resourcePathnameFull) || '';
-
-    if (pagePathname && pagePathname !== '/' && resourcePathnameFull.startsWith(`${pagePathname}/`)) {
-      // recurso dentro de la ruta de la página -> usar pageBaseName como prefijo y quitar el prefijo del pathname
-      let resourcePathname = resourcePathnameFull.slice(pagePathname.length); // starts with '/'
-      if (!resourcePathname.startsWith('/')) resourcePathname = `/${resourcePathname}`;
-
-      const nameWithoutExt = resourcePathname
+    // Caso 1: recurso apunta *exactamente* a la misma ruta de la página (ej. /blog/about)
+    if (normalizedPagePath && normalizedPagePath === normalizedResourcePath) {
+      // Guardar como <pageBaseName>.html dentro de _files
+      resourceFileName = `${pageBaseName}.html`;
+    } else if (normalizedPagePath && normalizedPagePath !== '/' && normalizedResourcePath.startsWith(`${normalizedPagePath}/`)) {
+      // Caso 2: recurso dentro de la ruta de la página
+      // quitar el prefijo de la ruta de la página para evitar duplicados "blog-about-blog-about"
+      let relativeAfterPage = normalizedResourcePath.slice(normalizedPagePath.length); // begins with '/'
+      if (!relativeAfterPage.startsWith('/')) relativeAfterPage = `/${relativeAfterPage}`;
+      const nameWithoutExt = relativeAfterPage
         .replace(/^\/+/, '')   // quitar slash inicial
-        .replace(ext, '')      // quitar ext
+        .replace(path.extname(relativeAfterPage) || '', '') // quitar ext si existe
         .replace(/\//g, '-')   // / -> -
         .replace(/\./g, '-')   // . -> -
         .replace(/[^a-zA-Z0-9-]/g, '');
-
-      resourceFileName = `${pageBaseName}-${nameWithoutExt}${ext}`;
+      // Asegurar que ext tenga punto si viene vacío
+      const finalExt = path.extname(relativeAfterPage) || '.html';
+      resourceFileName = `${pageBaseName}-${nameWithoutExt}${finalExt}`;
     } else {
-      // recurso fuera de la ruta de la página -> usar hostname como prefijo (igual que buildFileName)
-      // Generamos usando hostname + resourcePathname
-      const { hostname } = new URL(resourceAbsoluteUrl);
-      const nameWithoutExt = resourcePathnameFull
+      // Caso 3: recurso fuera de la ruta de la página -> usar hostname como prefijo
+      const host = new URL(resourceAbsoluteUrl).hostname;
+      const hostClean = host.replace(/\./g, '-').replace(/[^a-zA-Z0-9-]/g, '');
+      const nameWithoutExt = normalizedResourcePath
         .replace(/^\/+/, '')
-        .replace(ext, '')
+        .replace(path.extname(normalizedResourcePath) || '', '')
         .replace(/\//g, '-')
         .replace(/\./g, '-')
         .replace(/[^a-zA-Z0-9-]/g, '');
-      const hostClean = hostname.replace(/\./g, '-').replace(/[^a-zA-Z0-9-]/g, '');
-      resourceFileName = `${hostClean}-${nameWithoutExt}${ext}`; // ej: site-com-photos-me.jpg
+      const finalExt = path.extname(normalizedResourcePath) || '.html';
+      resourceFileName = `${hostClean}-${nameWithoutExt}${finalExt}`; // e.g. site-com-photos-me.jpg
     }
 
     const resourceOutputPath = path.join(resourcesDirPath, resourceFileName);
