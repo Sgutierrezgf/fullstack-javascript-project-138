@@ -7,10 +7,6 @@ import { Listr } from 'listr2';
 
 const log = debug('page-loader');
 
-/**
- * Genera nombre de archivo para la página principal.
- * Ej: https://site.com/blog/about  -> site-com-blog-about.html
- */
 const buildFileName = (url, extFallback = '.html') => {
   const { hostname, pathname } = new URL(url);
   const ext = path.extname(pathname) || extFallback;
@@ -22,9 +18,6 @@ const buildFileName = (url, extFallback = '.html') => {
   return `${cleanName}${ext}`;
 };
 
-/**
- * Comprueba si el recurso pertenece al mismo host/base
- */
 const isLocalResource = (resource, base) => {
   try {
     const resourceUrl = new URL(resource, base);
@@ -35,9 +28,6 @@ const isLocalResource = (resource, base) => {
   }
 };
 
-/**
- * Descarga recurso y escribe en disk. Si falla, crea archivo vacío.
- */
 const downloadResource = async (url, outputPath) => {
   try {
     const response = await axios.get(url, { responseType: 'arraybuffer' });
@@ -57,13 +47,10 @@ const downloadResource = async (url, outputPath) => {
   }
 };
 
-/**
- * pageLoader principal
- */
 const pageLoader = async (url, outputDir = process.cwd()) => {
   log(`Inicio descarga de: ${url}`);
 
-  // 1) Verificar que el directorio de salida exista (test espera error si no existe)
+  // 1) Verificar que outputDir exista (test espera rejection si no existe)
   try {
     await fs.access(outputDir);
   } catch {
@@ -79,66 +66,61 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
   }
 
   const html = response.data;
-
-  // 3) Construir nombres y paths
-  const mainFileName = buildFileName(url, '.html'); // ej: site-com-blog-about.html
+  const mainFileName = buildFileName(url, '.html'); // site-com-blog-about.html
   const mainFilePath = path.resolve(outputDir, mainFileName);
-  const resourcesDirName = mainFileName.replace('.html', '_files'); // ej: site-com-blog-about_files
+  const resourcesDirName = mainFileName.replace('.html', '_files'); // site-com-blog-about_files
   const resourcesDirPath = path.join(outputDir, resourcesDirName);
 
-  // Crear carpeta de recursos (solo si outputDir existe)
+  // 3) Crear carpeta de recursos (outputDir ya existe)
   await fs.mkdir(resourcesDirPath, { recursive: true });
 
-  // 4) Parsear HTML y recopilar recursos locales
   const $ = cheerio.load(html);
   const baseUrl = new URL(url);
+  const pagePathname = baseUrl.pathname.replace(/\/$/, ''); // e.g. '/blog/about' (sin slash final)
   const resources = [];
 
   $('img[src], link[href], script[src]').each((_, el) => {
-    // usar .get(0).tagName para compatibilidad
     const tag = $(el).get(0).tagName;
     const attr = tag === 'link' ? 'href' : 'src';
     const rawLink = $(el).attr(attr);
     if (!rawLink) return;
 
-    // Solo recursos del mismo host (locales)
     if (!isLocalResource(rawLink, baseUrl.href)) return;
 
-    // Resolver URL absoluta del recurso
     const resourceAbsoluteUrl = new URL(rawLink, baseUrl.href).href;
+    const resourcePathnameFull = new URL(resourceAbsoluteUrl).pathname; // e.g. '/blog/about/assets/styles.css' or '/assets/styles.css'
 
-    // Construir nombre del recurso con el prefijo del archivo principal:
-    // formato esperado: <pageBaseName>-<ruta-limpia><.ext>
+    // Si resourcePathnameFull incluye el pagePathname como prefijo, lo removemos
+    let resourcePathname = resourcePathnameFull;
+    if (pagePathname && pagePathname !== '/' && resourcePathnameFull.startsWith(`${pagePathname}/`)) {
+      resourcePathname = resourcePathnameFull.slice(pagePathname.length); // '/assets/styles.css'
+      // Asegurar que empiece por '/'
+      if (!resourcePathname.startsWith('/')) {
+        resourcePathname = `/${resourcePathname}`;
+      }
+    }
+
+    // Construir nombre: <pageBaseName>-<ruta-limpia><.ext>
     const pageBaseName = mainFileName.replace('.html', ''); // site-com-blog-about
-
-    // extraer pathname sin query ni hash
-    const resourcePathname = new URL(resourceAbsoluteUrl).pathname; // ej: /assets/styles.css
-
-    // ext (incluye el punto) — si no hay ext, ext = ''
     const ext = path.extname(resourcePathname) || '';
-
-    // limpiar la parte sin extensión: quitar leading slash, quitar la extensión
-    // luego reemplazar "/" por "-" y "." por "-" y eliminar caracteres no permitidos
     const nameWithoutExt = resourcePathname
-      .replace(/^\/+/, '')       // quitar /
-      .replace(ext, '')         // quitar ext del final
-      .replace(/\//g, '-')      // / -> -
-      .replace(/\./g, '-')      // . -> -
-      .replace(/[^a-zA-Z0-9-]/g, ''); // quitar otros caracteres
+      .replace(/^\/+/, '')     // quitar slash inicial
+      .replace(ext, '')        // quitar extensión
+      .replace(/\//g, '-')     // / -> -
+      .replace(/\./g, '-')     // . -> -
+      .replace(/[^a-zA-Z0-9-]/g, ''); // quitar caracteres no permitidos
 
     const resourceFileName = `${pageBaseName}-${nameWithoutExt}${ext}`; // ej: site-com-blog-about-assets-styles.css
-
     const resourceOutputPath = path.join(resourcesDirPath, resourceFileName);
     const localPath = path.posix.join(resourcesDirName, resourceFileName);
 
-    // Push a lista y actualizar el atributo en HTML
     resources.push({ url: resourceAbsoluteUrl, outputPath: resourceOutputPath });
     $(el).attr(attr, localPath);
   });
 
   log(`Se encontraron ${resources.length} recursos locales`);
 
-  // 5) Descargar recursos (concurrency), si falla se crea archivo vacío
+  // 4) Descargar recursos concurrentemente
   const tasks = new Listr(
     resources.map((r) => ({
       title: `Descargando ${r.url}`,
@@ -151,7 +133,7 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
 
   await tasks.run();
 
-  // 6) Guardar HTML modificado
+  // 5) Guardar HTML modificado
   await fs.writeFile(mainFilePath, $.html());
   log(`Archivo principal guardado en ${mainFilePath}`);
 
