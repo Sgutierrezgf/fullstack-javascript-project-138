@@ -44,6 +44,19 @@ const downloadResource = async (url, outputPath) => {
 const pageLoader = async (url, outputDir = process.cwd()) => {
   log(`Inicio descarga de: ${url}`);
 
+  // ✅ Verificar que el directorio de salida existe realmente
+  let stats;
+  try {
+    stats = await fs.stat(outputDir);
+  } catch {
+    throw new Error(`El directorio de salida "${outputDir}" no existe`);
+  }
+
+  if (!stats.isDirectory()) {
+    throw new Error(`El destino "${outputDir}" no es un directorio válido`);
+  }
+
+  // 🔹 Descargar HTML principal
   let response;
   try {
     response = await axios.get(url);
@@ -57,13 +70,14 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
   const resourcesDirName = mainFileName.replace('.html', '_files');
   const resourcesDirPath = path.join(outputDir, resourcesDirName);
 
+  // 🔹 Crear directorio de recursos (solo si el de salida existe)
   await fs.mkdir(resourcesDirPath, { recursive: true });
 
   const $ = cheerio.load(html);
   const baseUrl = new URL(url);
   const resources = [];
 
-  // 🔹 Busca recursos locales
+  // 🔹 Buscar recursos locales (imágenes, CSS, JS)
   $('img[src], link[href], script[src]').each((_, el) => {
     const tag = el.tagName;
     const attr = tag === 'link' ? 'href' : 'src';
@@ -83,7 +97,7 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
 
   log(`Se encontraron ${resources.length} recursos locales`);
 
-  // 🔹 Descarga concurrente
+  // 🔹 Descarga concurrente de recursos
   const tasks = new Listr(
     resources.map(({ fullUrl, outputPath }) => ({
       title: `Descargando ${fullUrl}`,
@@ -96,6 +110,7 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
 
   await tasks.run();
 
+  // 🔹 Guardar el HTML modificado
   await fs.writeFile(mainFilePath, $.html());
   log(`Archivo principal guardado en ${mainFilePath}`);
 
