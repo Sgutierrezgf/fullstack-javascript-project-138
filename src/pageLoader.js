@@ -36,6 +36,8 @@ const downloadResource = async (url, outputPath) => {
   if (response.status !== 200) {
     throw new Error(`Error HTTP ${response.status}`);
   }
+  // ✅ Crear subdirectorios si no existen
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, response.data);
 };
 
@@ -94,12 +96,15 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
 
     if (isLocalResource(link, baseUrl.href)) {
       const fullUrl = new URL(link, baseUrl.href).href;
-      //   const ext = path.extname(link) || '.html';
-      const resourceFileName = buildResourceFileName(fullUrl);
-      const localPath = path.posix.join(resourcesDirName, resourceFileName);
-      const outputPath = path.join(resourcesDirPath, resourceFileName);
 
-      resources.push({ fullUrl, outputPath });
+      // Obtener la ruta relativa limpia (sin el dominio)
+      const resourcePathname = new URL(fullUrl).pathname.replace(/^\/+/, '');
+      const resourceOutputPath = path.join(resourcesDirPath, resourcePathname);
+      const localPath = path.posix.join(resourcesDirName, resourcePathname);
+
+      resources.push({ fullUrl, outputPath: resourceOutputPath });
+
+      // Actualizar el atributo dentro del HTML
       $(el).attr(attr, localPath);
     }
   });
