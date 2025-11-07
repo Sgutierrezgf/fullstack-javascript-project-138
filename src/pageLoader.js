@@ -40,7 +40,7 @@ const downloadResource = async (url, outputPath) => {
 const pageLoader = async (url, outputDir = process.cwd()) => {
   log(`Inicio descarga de: ${url}`);
 
-  // 🔹 Verificar si el directorio existe antes de continuar
+  // verificar que el directorio de salida exista
   try {
     await fs.access(outputDir);
   } catch {
@@ -76,13 +76,14 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
       const fullUrl = new URL(link, baseUrl.href).href;
 
       const pageBaseName = mainFileName.replace('.html', '');
+      // mantener la extensión original dentro del nombre y no añadirla después
       const relativePath = new URL(link, baseUrl.href).pathname;
       const cleanResourceName = relativePath
         .replace(/^\/+/, '')
         .replace(/\//g, '-')
-        .replace(/[^a-zA-Z0-9.-]/g, ''); // ✅ mantenemos puntos dentro del nombre
-      const ext = path.extname(link) || '';
-      const resourceFileName = `${pageBaseName}-${cleanResourceName}${ext}`;
+        .replace(/[^a-zA-Z0-9.-]/g, ''); // permitimos puntos para preservar ext
+      // No agregamos ext por separado: cleanResourceName ya incluirá ".css", ".js", etc.
+      const resourceFileName = `${pageBaseName}-${cleanResourceName}`;
 
       const resourceOutputPath = path.join(resourcesDirPath, resourceFileName);
       const localPath = path.posix.join(resourcesDirName, resourceFileName);
