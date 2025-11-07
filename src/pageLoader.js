@@ -80,8 +80,7 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
       const cleanResourceName = relativePath
         .replace(/^\/+/, '')
         .replace(/\//g, '-')
-        .replace(/\./g, '-')
-        .replace(/[^a-zA-Z0-9-]/g, '');
+        .replace(/[^a-zA-Z0-9.-]/g, ''); // ✅ mantenemos puntos dentro del nombre
       const ext = path.extname(link) || '';
       const resourceFileName = `${pageBaseName}-${cleanResourceName}${ext}`;
 
