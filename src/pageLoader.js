@@ -7,6 +7,10 @@ import { Listr } from 'listr2';
 
 const log = debug('page-loader');
 
+/**
+ * Genera nombre de archivo para la página principal.
+ * Ej: https://site.com/blog/about  -> site-com-blog-about.html
+ */
 const buildFileName = (url, extFallback = '.html') => {
   const { hostname, pathname } = new URL(url);
   const ext = path.extname(pathname) || extFallback;
@@ -50,7 +54,7 @@ const downloadResource = async (url, outputPath) => {
 const pageLoader = async (url, outputDir = process.cwd()) => {
   log(`Inicio descarga de: ${url}`);
 
-  // 1) Verificar que outputDir exista (test espera rejection si no existe)
+  // 1) Verificar que outputDir exista (test espera error si no existe)
   try {
     await fs.access(outputDir);
   } catch {
@@ -77,6 +81,7 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
   const $ = cheerio.load(html);
   const baseUrl = new URL(url);
   const pagePathname = baseUrl.pathname.replace(/\/$/, ''); // e.g. '/blog/about' (sin slash final)
+  const pageBaseName = mainFileName.replace('.html', ''); // site-com-blog-about
   const resources = [];
 
   $('img[src], link[href], script[src]').each((_, el) => {
@@ -90,27 +95,42 @@ const pageLoader = async (url, outputDir = process.cwd()) => {
     const resourceAbsoluteUrl = new URL(rawLink, baseUrl.href).href;
     const resourcePathnameFull = new URL(resourceAbsoluteUrl).pathname; // e.g. '/blog/about/assets/styles.css' or '/assets/styles.css'
 
-    // Si resourcePathnameFull incluye el pagePathname como prefijo, lo removemos
-    let resourcePathname = resourcePathnameFull;
+    // Decide la estrategia de nombre:
+    // - Si resourcePathnameFull comienza con pagePathname + '/', el recurso es relativo a la página:
+    //    nombre => <pageBaseName>-<ruta-limpia><.ext>
+    // - Si no, nombre => <hostname>-<ruta-limpia><.ext>  (misma convención que buildFileName para recursos top-level)
+    let resourceFileName;
+
+    // extraer ext y construir nameWithoutExt de forma segura
+    const ext = path.extname(resourcePathnameFull) || '';
+
     if (pagePathname && pagePathname !== '/' && resourcePathnameFull.startsWith(`${pagePathname}/`)) {
-      resourcePathname = resourcePathnameFull.slice(pagePathname.length); // '/assets/styles.css'
-      // Asegurar que empiece por '/'
-      if (!resourcePathname.startsWith('/')) {
-        resourcePathname = `/${resourcePathname}`;
-      }
+      // recurso dentro de la ruta de la página -> usar pageBaseName como prefijo y quitar el prefijo del pathname
+      let resourcePathname = resourcePathnameFull.slice(pagePathname.length); // starts with '/'
+      if (!resourcePathname.startsWith('/')) resourcePathname = `/${resourcePathname}`;
+
+      const nameWithoutExt = resourcePathname
+        .replace(/^\/+/, '')   // quitar slash inicial
+        .replace(ext, '')      // quitar ext
+        .replace(/\//g, '-')   // / -> -
+        .replace(/\./g, '-')   // . -> -
+        .replace(/[^a-zA-Z0-9-]/g, '');
+
+      resourceFileName = `${pageBaseName}-${nameWithoutExt}${ext}`;
+    } else {
+      // recurso fuera de la ruta de la página -> usar hostname como prefijo (igual que buildFileName)
+      // Generamos usando hostname + resourcePathname
+      const { hostname } = new URL(resourceAbsoluteUrl);
+      const nameWithoutExt = resourcePathnameFull
+        .replace(/^\/+/, '')
+        .replace(ext, '')
+        .replace(/\//g, '-')
+        .replace(/\./g, '-')
+        .replace(/[^a-zA-Z0-9-]/g, '');
+      const hostClean = hostname.replace(/\./g, '-').replace(/[^a-zA-Z0-9-]/g, '');
+      resourceFileName = `${hostClean}-${nameWithoutExt}${ext}`; // ej: site-com-photos-me.jpg
     }
 
-    // Construir nombre: <pageBaseName>-<ruta-limpia><.ext>
-    const pageBaseName = mainFileName.replace('.html', ''); // site-com-blog-about
-    const ext = path.extname(resourcePathname) || '';
-    const nameWithoutExt = resourcePathname
-      .replace(/^\/+/, '')     // quitar slash inicial
-      .replace(ext, '')        // quitar extensión
-      .replace(/\//g, '-')     // / -> -
-      .replace(/\./g, '-')     // . -> -
-      .replace(/[^a-zA-Z0-9-]/g, ''); // quitar caracteres no permitidos
-
-    const resourceFileName = `${pageBaseName}-${nameWithoutExt}${ext}`; // ej: site-com-blog-about-assets-styles.css
     const resourceOutputPath = path.join(resourcesDirPath, resourceFileName);
     const localPath = path.posix.join(resourcesDirName, resourceFileName);
 
